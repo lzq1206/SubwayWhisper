@@ -63,6 +63,7 @@ let originName = '';
 let originMarker = null;
 let reachOverlays = [];
 let activeMode = 'transit';
+let activeOverlay = 'none';
 let toastTimeout = 0;
 let activeController = null;
 let poiHeatmapLayer = null;
@@ -100,13 +101,10 @@ const elements = {
   toast: document.querySelector('#toast'),
   zoomIn: document.querySelector('#zoom-in'),
   zoomOut: document.querySelector('#zoom-out'),
-  poiHeatmapToggle: document.querySelector('#poi-heatmap-toggle'),
-  worldPopToggle: document.querySelector('#worldpop-toggle'),
+  overlaySelect: document.querySelector('#map-overlay'),
   worldPopLegend: document.querySelector('#worldpop-legend'),
-  heritageSitesToggle: document.querySelector('#heritage-sites-toggle'),
-  hidePanelButton: document.querySelector('#hide-panel-button'),
-  showPanelButton: document.querySelector('#show-panel-button'),
   controlPanel: document.querySelector('#control-panel'),
+  bottomControlDock: document.querySelector('#bottom-control-dock'),
 };
 
 function formatNumber(value, digits = 1) {
@@ -261,7 +259,7 @@ function loadAmapPlugins(plugins) {
 }
 
 function schedulePoiHeatmapRefresh() {
-  if (!elements.poiHeatmapToggle.checked) return;
+  if (activeOverlay !== 'heatmap') return;
   ++poiHeatmapRequestId;
   window.clearTimeout(poiHeatmapRefreshTimer);
   poiHeatmapRefreshTimer = window.setTimeout(() => void setPoiHeatmapEnabled(true), 600);
@@ -324,9 +322,9 @@ async function setPoiHeatmapEnabled(enabled) {
   }
   try {
     await loadAmapPlugins(['AMap.Heatmap', 'AMap.PlaceSearch']);
-    if (requestId !== poiHeatmapRequestId || !elements.poiHeatmapToggle.checked) return;
+    if (requestId !== poiHeatmapRequestId || activeOverlay !== 'heatmap') return;
     const points = await searchViewportHeatmapPoints(requestId);
-    if (requestId !== poiHeatmapRequestId || !elements.poiHeatmapToggle.checked) return;
+    if (requestId !== poiHeatmapRequestId || activeOverlay !== 'heatmap') return;
     if (!poiHeatmapLayer) {
       poiHeatmapLayer = new AMap.Heatmap(map, { radius: 25, opacity: [0, 0.8], zooms: [3, 20], zIndex: 28 });
     }
@@ -380,6 +378,13 @@ function setWorldPopEnabled(enabled) {
   else worldPopLayer?.hide();
 }
 
+function setSelectedOverlay(value) {
+  activeOverlay = value;
+  void setPoiHeatmapEnabled(value === 'heatmap');
+  setWorldPopEnabled(value === 'population');
+  void setHeritageSitesEnabled(value === 'heritage');
+}
+
 async function setHeritageSitesEnabled(enabled) {
   heritageSitesEnabled = enabled;
   if (!enabled) {
@@ -393,11 +398,13 @@ async function setHeritageSitesEnabled(enabled) {
   setMapStatus('正在加载全国重点文保单位数据…');
   try {
     heritageSites = await loadHeritageSites();
-    if (!heritageSitesEnabled || !elements.heritageSitesToggle.checked) return;
+    if (!heritageSitesEnabled || activeOverlay !== 'heritage') return;
     renderHeritageSites();
     setMapStatus('文保单位图层已开启 · ' + heritageSites.length.toLocaleString('zh-CN') + ' 处');
   } catch (error) {
-    elements.heritageSitesToggle.checked = false;
+    if (!heritageSitesEnabled || activeOverlay !== 'heritage') return;
+    activeOverlay = 'none';
+    elements.overlaySelect.value = 'none';
     heritageSitesEnabled = false;
     setMapStatus('文保数据加载失败');
     showToast(error.message || '文保单位数据加载失败，请稍后重试', 6500);
@@ -595,17 +602,6 @@ function openHeritageDetails(site, position = site.position) {
   }
   heritageInfoWindow.setContent(content);
   heritageInfoWindow.open(map, position);
-}
-
-function setControlPanelHidden(hidden) {
-  document.querySelector('.map-shell').classList.toggle('panel-hidden', hidden);
-  elements.controlPanel.setAttribute('aria-hidden', String(hidden));
-  elements.controlPanel.inert = hidden;
-  elements.showPanelButton.hidden = !hidden;
-  elements.showPanelButton.setAttribute('aria-expanded', String(!hidden));
-  if (hidden) elements.showPanelButton.focus();
-  else elements.hidePanelButton.focus();
-  window.setTimeout(() => map?.resize(), 240);
 }
 
 function amapErrorMessage(code, info) {
@@ -930,12 +926,12 @@ function polygonMetrics(shapes, maxMinutes, originCoordinate) {
 
 function fitReachToMap() {
   if (!map || !reachOverlays.length) return;
-  const isMobile = window.innerWidth <= 700;
-  const panelHidden = document.querySelector('.map-shell').classList.contains('panel-hidden');
-  const panelHeight = document.querySelector('.control-panel').getBoundingClientRect().height;
+  const isMobile = window.innerWidth <= 790;
+  const panelHeight = elements.controlPanel.getBoundingClientRect().height;
+  const dockHeight = elements.bottomControlDock.getBoundingClientRect().height;
   const avoid = isMobile
-    ? [58, panelHidden ? 18 : panelHeight + 28, 18, 18]
-    : [58, 30, panelHidden ? 30 : 420, 30];
+    ? [panelHeight + 22, 56, dockHeight + 18, 12]
+    : [panelHeight + 20, 56, dockHeight + 20, 420];
   map.setFitView([originMarker, ...reachOverlays], true, avoid, 14);
 }
 
@@ -1153,20 +1149,7 @@ elements.timeRange.addEventListener('change', () => {
 });
 
 
-elements.poiHeatmapToggle.addEventListener('change', () => {
-  void setPoiHeatmapEnabled(elements.poiHeatmapToggle.checked);
-});
-
-elements.worldPopToggle.addEventListener('change', () => {
-  setWorldPopEnabled(elements.worldPopToggle.checked);
-});
-
-elements.heritageSitesToggle.addEventListener('change', () => {
-  void setHeritageSitesEnabled(elements.heritageSitesToggle.checked);
-});
-
-elements.hidePanelButton.addEventListener('click', () => setControlPanelHidden(true));
-elements.showPanelButton.addEventListener('click', () => setControlPanelHidden(false));
+elements.overlaySelect.addEventListener('change', () => setSelectedOverlay(elements.overlaySelect.value));
 
 elements.calculateButton.addEventListener('click', calculateReach);
 elements.zoomIn.addEventListener('click', () => map?.zoomIn());

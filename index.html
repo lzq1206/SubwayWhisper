@@ -2,7 +2,7 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#f5f7fb" />
     <meta name="description" content="使用高德公交到达圈和 OpenStreetMap 路网等时圈查看城市通勤范围。" />
     <title>城市通勤圈 · SubwayWhisper</title>
@@ -20,7 +20,7 @@
         <button id="zoom-out" type="button" aria-label="缩小地图" title="缩小">−</button>
       </div>
 
-      <section id="control-panel" class="control-panel" aria-labelledby="app-title" aria-hidden="false">
+      <section id="control-panel" class="control-panel" aria-label="地点搜索与地图叠加">
         <header class="brand-row">
           <div class="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 32 32" fill="none"><path d="M16 28s10-9.4 10-17a10 10 0 1 0-20 0c0 7.6 10 17 10 17Z" fill="currentColor"/><circle cx="16" cy="11" r="3.6" fill="white"/><path d="M7 27h18" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/></svg>
@@ -30,7 +30,6 @@
             <h1 id="app-title">城市通勤圈</h1>
           </div>
           <span class="estimate-badge"><span></span>高德地图底图</span>
-          <button id="hide-panel-button" class="panel-icon-button" type="button" aria-label="隐藏菜单" title="隐藏菜单">×</button>
         </header>
 
         <p class="intro">选择出发点与时长，查看公交、骑行或驾车可达的真实路网边界。</p>
@@ -40,16 +39,51 @@
           <div class="search-control">
             <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.2 4.2"/></svg>
             <input id="place-search" name="place" type="search" placeholder="搜索地标、街道或城市" aria-label="搜索出发地点" />
-            <button id="locate-button" class="locate-button" type="button" aria-label="使用我的当前位置" title="使用我的当前位置">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2.7v3M12 18.3v3M2.7 12h3m12.6 0h3"/></svg>
-            </button>
           </div>
           <div id="search-results" class="search-results" role="listbox" aria-label="地点搜索结果" hidden></div>
           <p class="field-hint">默认点按设备 IP 匹配所在城市的近似中心；搜索街道或点击地图可精确调整</p>
         </form>
 
-        <div class="section-divider"></div>
+        <section class="overlay-picker" aria-labelledby="overlay-heading">
+          <label id="overlay-heading" class="field-label" for="map-overlay">地图叠加</label>
+          <select id="map-overlay" aria-label="选择一个地图叠加图层">
+            <option value="none">不显示叠加</option>
+            <option value="heatmap">高德热力图</option>
+            <option value="population">人口地图 · WorldPop</option>
+            <option value="heritage">全国重点文保单位</option>
+          </select>
+          <div id="worldpop-legend" class="worldpop-legend" hidden>
+            <div class="worldpop-legend-gradient" aria-hidden="true"></div>
+            <div class="worldpop-legend-values" aria-hidden="true"><span>0</span><span>10</span><span>50</span><span>150</span><span>500</span><span>2k</span><span>10k+</span></div>
+            <small>人口数 / 平方公里</small>
+          </div>
+        </section>
 
+        <section class="results-card" aria-live="polite" aria-label="可达边界计算结果">
+          <div class="results-heading">
+            <span class="results-dot" aria-hidden="true"></span>
+            <span id="result-title">等待选择出发点</span>
+          </div>
+          <div class="stats-row">
+            <div class="stat-item">
+              <strong id="area-value">—</strong>
+              <span>可达区域面积 <i>km²</i></span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+              <strong id="radius-value">—</strong>
+              <span>边界最远距离 <i>km</i></span>
+            </div>
+          </div>
+        </section>
+
+        <div class="panel-footer">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M8 7v4m0-6h.01"/></svg>
+          <p>IP 默认点为高德返回的城市范围中心，仅供起点参考，点击地图可调整。公交边界使用高德官方到达圈；骑行和驾车边界按 OpenStreetMap 路网计算，不含实时路况。高德热力图展示当前视野内的公园 POI 采样分布，不代表实时人流。文保图层数据来自 <a href="https://github.com/lzq1206/CulturalWhisper" target="_blank" rel="noreferrer">CulturalWhisper</a>，据 <a href="https://gl.ncha.gov.cn/#/public-service" target="_blank" rel="noreferrer">国家文物局全国重点文物保护单位名单</a>整理，数据批次覆盖 1961–2019 年。路网数据：<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap 贡献者</a> / Valhalla。</p>
+        </div>
+      </section>
+
+      <section id="bottom-control-dock" class="bottom-control-dock" aria-label="通勤范围设置">
         <fieldset class="mode-fieldset">
           <legend class="field-label">出行方式</legend>
           <div class="mode-options" role="group" aria-label="选择出行方式">
@@ -80,61 +114,17 @@
           <div class="range-ticks" aria-hidden="true"><span>10</span><span>20</span><span>30</span><span>40</span><span>45</span></div>
           <p id="time-note" class="time-options-note">公交 / 地铁支持 10–45 分钟。</p>
         </section>
-
         <p id="mode-hint" class="mode-hint">公交范围来自高德官方到达圈，按所选分钟数查询，不指定出发时刻。</p>
-
-        <section class="overlay-section" aria-labelledby="overlay-heading">
-          <h2 id="overlay-heading" class="field-label">地图叠加（可同时多选）</h2>
-          <label class="overlay-option" for="poi-heatmap-toggle">
-            <span class="overlay-copy"><strong>高德热力图</strong><small>随缩放、移动更新 · 公园 POI 分布</small></span>
-            <span class="switch"><input id="poi-heatmap-toggle" type="checkbox" /><span aria-hidden="true"></span></span>
-          </label>
-          <label class="overlay-option" for="worldpop-toggle">
-            <span class="overlay-copy"><strong>人口地图</strong><small>WorldPop 全球人口密度 · 2020 年估算</small></span>
-            <span class="switch"><input id="worldpop-toggle" type="checkbox" /><span aria-hidden="true"></span></span>
-          </label>
-          <div id="worldpop-legend" class="worldpop-legend" hidden>
-            <div class="worldpop-legend-gradient" aria-hidden="true"></div>
-            <div class="worldpop-legend-values" aria-hidden="true"><span>0</span><span>10</span><span>50</span><span>150</span><span>500</span><span>2k</span><span>10k+</span></div>
-            <small>人口数 / 平方公里</small>
-          </div>
-          <label class="overlay-option" for="heritage-sites-toggle">
-            <span class="overlay-copy"><strong>全国重点文保单位</strong><small>5,066 处 · 批次颜色、类别图形，放大后显示名称</small></span>
-            <span class="switch"><input id="heritage-sites-toggle" type="checkbox" /><span aria-hidden="true"></span></span>
-          </label>
-        </section>
-
         <button id="calculate-button" class="calculate-button" type="button" disabled>计算可达边界</button>
-
-        <section class="results-card" aria-live="polite" aria-label="可达边界计算结果">
-          <div class="results-heading">
-            <span class="results-dot" aria-hidden="true"></span>
-            <span id="result-title">等待选择出发点</span>
-          </div>
-          <div class="stats-row">
-            <div class="stat-item">
-              <strong id="area-value">—</strong>
-              <span>可达区域面积 <i>km²</i></span>
-            </div>
-            <div class="stat-divider"></div>
-            <div class="stat-item">
-              <strong id="radius-value">—</strong>
-              <span>边界最远距离 <i>km</i></span>
-            </div>
-          </div>
-        </section>
-
-        <div class="panel-footer">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M8 7v4m0-6h.01"/></svg>
-          <p>IP 默认点为高德返回的城市范围中心，仅供起点参考，点击地图可调整。公交边界使用高德官方到达圈；骑行和驾车边界按 OpenStreetMap 路网计算，不含实时路况。高德热力图展示当前视野内的公园 POI 采样分布，不代表实时人流。文保图层数据来自 <a href="https://github.com/lzq1206/CulturalWhisper" target="_blank" rel="noreferrer">CulturalWhisper</a>，据 <a href="https://gl.ncha.gov.cn/#/public-service" target="_blank" rel="noreferrer">国家文物局全国重点文物保护单位名单</a>整理，数据批次覆盖 1961–2019 年。路网数据：<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap 贡献者</a> / Valhalla。</p>
-        </div>
       </section>
+
+      <button id="locate-button" class="locate-button" type="button" aria-label="使用我的当前位置" title="使用我的当前位置">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2.7v3M12 18.3v3M2.7 12h3m12.6 0h3"/></svg>
+      </button>
 
       <div class="map-top-right">
         <div id="map-status" class="map-status" role="status">搜索地点或点击地图开始</div>
       </div>
-
-      <button id="show-panel-button" class="panel-show-button" type="button" aria-controls="control-panel" aria-expanded="true" hidden>显示菜单</button>
 
       <section id="legend" class="map-legend" aria-label="通勤时间图例" hidden>
         <div id="legend-title" class="legend-title"><span class="legend-pin" aria-hidden="true">●</span> 可达时间</div>
