@@ -83,7 +83,9 @@ export async function amapGet(path, params, key) {
     if (code === '31006' || code === '30007') return null;
     const message = code === '10012'
       ? '高德 Key 暂无此接口权限（10012）'
-      : '高德接口返回错误（' + (code || 'unknown') + '）';
+      : code === '10021'
+        ? '高德账号的该接口 QPS 已超限（10021）；应用已降低路线请求并发，请稍后重试。若持续出现，请查看高德控制台“流量分析 → 配额管理”'
+        : '高德接口返回错误（' + (code || 'unknown') + '）';
     throw apiError('AMap API error ' + code, 502, message);
   }
   return data;

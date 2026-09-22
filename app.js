@@ -236,7 +236,7 @@ async function calculateReach() {
   } catch (error) {
     if (error.name !== 'AbortError') {
       elements.resultTitle.textContent = '路线范围查询失败';
-      setMapStatus('请检查 Cloudflare Worker 的 AMAP_WEB_KEY Secret 配置和高德接口权限');
+      setMapStatus('路线查询失败 · 请查看提示并稍后重试');
       showToast(error.message || '路线范围查询失败，请稍后重试', 6000);
     }
   } finally {

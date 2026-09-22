@@ -11,8 +11,9 @@ import {
   wgs84ToGcj02,
 } from '../../shared/amap.js';
 
-const MAX_ROUTE_QUERIES = 40;
-const ROUTE_BATCH_SIZE = 4;
+const MAX_ROUTE_QUERIES = 24;
+const ROUTE_BATCH_SIZE = 1;
+const ROUTE_MIN_INTERVAL_MS = 650;
 const GRID_SCALE_METERS_PER_MINUTE = {
   transit: 100,
   bike: 90,
@@ -160,6 +161,7 @@ export async function onRequestPost(context) {
     let frontier = neighbors(0, 0);
     for (const [row, column] of frontier) seen.add(row + ',' + column);
     let queryCount = 0;
+    let lastRouteQueryStartedAt = 0;
 
     while (frontier.length && queryCount < MAX_ROUTE_QUERIES) {
       const batch = frontier.splice(0, Math.min(ROUTE_BATCH_SIZE, MAX_ROUTE_QUERIES - queryCount));
@@ -169,6 +171,9 @@ export async function onRequestPost(context) {
         if (outsideChina(point.lng, point.lat)) {
           return { row, column, point, route: null };
         }
+        const waitMs = lastRouteQueryStartedAt + ROUTE_MIN_INTERVAL_MS - Date.now();
+        if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+        lastRouteQueryStartedAt = Date.now();
         const route = await queryRoute(origin, point, mode, key, cityCode, body.departure);
         return { row, column, point, route };
       }));
