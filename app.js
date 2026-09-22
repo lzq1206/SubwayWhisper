@@ -1,11 +1,15 @@
 'use strict';
 
-const API_BASE = window.SUBWAY_API_BASE || (
-  window.location.hostname.endsWith('.pages.dev')
-    || window.location.hostname.endsWith('.workers.dev')
-    ? window.location.origin + '/api'
-    : 'https://subwaywhisper.lzq1206.workers.dev/api'
-);
+const AMAP_WEB_KEY = '9ec9628db5e66650e43dea74f85a8262';
+const AMAP_BASE = 'https://restapi.amap.com';
+const AMAP_REQUEST_INTERVAL_MS = 1200;
+const GRID_PROFILES = {
+  coarse: { label: '大网格', multiplier: 2, maxSamples: 8 },
+  medium: { label: '中网格', multiplier: 1.5, maxSamples: 12 },
+  fine: { label: '小网格', multiplier: 1, maxSamples: 16 },
+};
+let amapRequestQueue = Promise.resolve();
+let lastAmapRequestStartedAt = 0;
 const MODES = {
   transit: { name: '公交 / 地铁' },
   bike: { name: '骑行' },
@@ -20,6 +24,8 @@ const elements = {
   locateButton: document.querySelector('#locate-button'),
   timeRange: document.querySelector('#time-range'),
   timeValue: document.querySelector('#time-value'),
+  gridSize: document.querySelector('#grid-size'),
+  gridValue: document.querySelector('#grid-value'),
   departureField: document.querySelector('#departure-field'),
   departureTime: document.querySelector('#departure-time'),
   calculateButton: document.querySelector('#calculate-button'),
@@ -61,6 +67,78 @@ function showToast(message, duration = 4200) {
 
 function setMapStatus(message) {
   elements.mapStatus.textContent = message;
+}
+
+function currentGridProfile() {
+  return GRID_PROFILES[elements.gridSize.value] || GRID_PROFILES.coarse;
+}
+
+function currentCellMeters() {
+  const scale = { transit: 100, bike: 90, car: 160 }[activeMode];
+  const rawSize = Number(elements.timeRange.value) * scale * currentGridProfile().multiplier;
+  return Math.max(600, Math.round(rawSize / 100) * 100);
+}
+
+function updateGridLabel() {
+  const cellKm = currentCellMeters() / 1000;
+  const profile = currentGridProfile();
+  elements.gridValue.textContent = cellKm.toFixed(1) + ' km 边长 · 最多 ' + profile.maxSamples + ' 个路线点';
+}
+
+function amapErrorMessage(code, info) {
+  const messages = {
+    '10001': '高德 Key 无效或已过期',
+    '10002': '当前 Key 没有该 Web 服务接口权限',
+    '10003': '高德接口今日调用量已达上限',
+    '10004': '高德接口请求过于频繁，请稍后再试',
+    '10009': '该 Key 平台类型与 Web 服务不匹配',
+    '10021': '高德账号接口 QPS 已超限，请稍后再试或减少同时使用人数',
+  };
+  return messages[String(code)] || ('高德接口错误（' + (code || '未知') + '）' + (info ? '：' + info : ''));
+}
+
+function waitForRequestSlot(signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const delay = Math.max(0, lastAmapRequestStartedAt + AMAP_REQUEST_INTERVAL_MS - Date.now());
+    if (!delay) {
+      resolve();
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, delay);
+    function onAbort() {
+      window.clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function amapGet(path, params, signal) {
+  const task = amapRequestQueue.then(async () => {
+    await waitForRequestSlot(signal);
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    lastAmapRequestStartedAt = Date.now();
+    const url = new URL(path, AMAP_BASE);
+    for (const [name, value] of Object.entries(params)) url.searchParams.set(name, String(value));
+    url.searchParams.set('key', AMAP_WEB_KEY);
+    url.searchParams.set('output', 'JSON');
+    const response = await fetch(url, { signal });
+    let data = {};
+    try { data = await response.json(); } catch {}
+    if (!response.ok || data.status !== '1' || data.infocode !== '10000') {
+      throw new Error(amapErrorMessage(data.infocode, data.info));
+    }
+    return data;
+  });
+  amapRequestQueue = task.catch(() => {});
+  return task;
 }
 
 function updateRangeTrack() {
@@ -176,18 +254,144 @@ function renderReach(data) {
   elements.radiusValue.textContent = maxRouteDistance ? formatNumber(maxRouteDistance / 1000, 1) : '—';
   const mode = MODES[activeMode];
   elements.resultTitle.textContent = originName + ' · ' + mode.name + ' · ' + maxMinutes + ' 分钟内';
-  const partialText = data.truncated ? ' · 已达单次查询上限，边缘未完整采样' : '';
-  setMapStatus(reachable.length + ' 个网格由高德路线耗时核验 · 网格为抽样' + partialText);
+  const partialText = data.truncated ? ' · 已达采样上限，边缘未完整采样' : '';
+  setMapStatus(reachable.length + ' 个网格由高德路线耗时核验 · 查询 ' + data.queryCount + ' 个路线点 · 边长 ' + (cellMeters / 1000).toFixed(1) + ' km' + partialText);
   addLegend(maxMinutes);
   fitCells(reachable, cellMeters);
 }
 
-async function requestJson(url, options) {
-  const response = await fetch(url, options);
-  let data = {};
-  try { data = await response.json(); } catch {}
-  if (!response.ok || data.error) throw new Error(data.message || '路线服务暂时不可用');
-  return data;
+function getRouteDetails(data, mode) {
+  const choices = mode === 'transit' ? (data.route?.transits || []) : (data.route?.paths || []);
+  const candidates = choices.map((choice) => {
+    const seconds = Number(choice.cost?.duration);
+    const distance = Number(choice.distance);
+    return {
+      durationSeconds: Number.isFinite(seconds) && seconds >= 0 ? seconds : null,
+      distanceMeters: Number.isFinite(distance) && distance >= 0 ? distance : 0,
+    };
+  }).filter((choice) => choice.durationSeconds !== null);
+  candidates.sort((left, right) => left.durationSeconds - right.durationSeconds);
+  return candidates[0] || null;
+}
+
+async function cityCodeForOrigin(point, signal) {
+  const [lng, lat] = wgs84ToGcj02(point.lng, point.lat);
+  const data = await amapGet('/v3/geocode/regeo', {
+    location: lng.toFixed(6) + ',' + lat.toFixed(6),
+    extensions: 'base',
+  }, signal);
+  const rawCode = data.regeocode?.addressComponent?.citycode;
+  const cityCode = Array.isArray(rawCode) ? rawCode[0] : rawCode;
+  if (!cityCode) throw new Error('无法识别出发点所在城市，请重新选择地图位置');
+  return String(cityCode);
+}
+
+async function queryRoute(start, destination, mode, cityCode, departure, signal) {
+  const [originLng, originLat] = wgs84ToGcj02(start.lng, start.lat);
+  const [destinationLng, destinationLat] = wgs84ToGcj02(destination.lng, destination.lat);
+  const params = {
+    origin: originLng.toFixed(6) + ',' + originLat.toFixed(6),
+    destination: destinationLng.toFixed(6) + ',' + destinationLat.toFixed(6),
+    show_fields: mode === 'car' ? 'cost,tmcs' : 'cost',
+  };
+  let path;
+  if (mode === 'car') {
+    path = '/v5/direction/driving';
+    params.strategy = 32;
+  } else if (mode === 'bike') {
+    path = '/v5/direction/bicycling';
+  } else {
+    path = '/v5/direction/transit/integrated';
+    params.city1 = cityCode;
+    params.city2 = cityCode;
+    params.strategy = 8;
+    params.AlternativeRoute = 1;
+    params.date = departure.date;
+    params.time = departure.time;
+  }
+  const data = await amapGet(path, params, signal);
+  return getRouteDetails(data, mode);
+}
+
+function gridPoint(center, row, column, cellMeters) {
+  const latitude = center.lat + row * cellMeters / 111320;
+  const metersPerDegreeLongitude = Math.max(10000, 111320 * Math.cos(center.lat * Math.PI / 180));
+  const longitude = center.lng + column * cellMeters / metersPerDegreeLongitude;
+  return { lat: latitude, lng: longitude };
+}
+
+function neighbors(row, column) {
+  const points = [];
+  for (let rowOffset = -1; rowOffset <= 1; rowOffset += 1) {
+    for (let columnOffset = -1; columnOffset <= 1; columnOffset += 1) {
+      if (rowOffset === 0 && columnOffset === 0) continue;
+      points.push([row + rowOffset, column + columnOffset]);
+    }
+  }
+  return points;
+}
+
+function selectSamples(points, count) {
+  const ordered = [...points].sort((left, right) => Math.atan2(left[0], left[1]) - Math.atan2(right[0], right[1]));
+  if (ordered.length <= count) return ordered;
+  const selected = [];
+  for (let index = 0; index < count; index += 1) {
+    selected.push(ordered[Math.floor((index + 0.5) * ordered.length / count)]);
+  }
+  return selected;
+}
+
+async function buildReachData(maxMinutes, departure, signal) {
+  const profile = currentGridProfile();
+  const cellMeters = currentCellMeters();
+  const cityCode = activeMode === 'transit' ? await cityCodeForOrigin(origin, signal) : '';
+  const cells = [{ row: 0, column: 0, lat: origin.lat, lng: origin.lng, durationSeconds: 0, distanceMeters: 0 }];
+  const seen = new Set(['0,0']);
+  let frontier = neighbors(0, 0);
+  for (const [row, column] of frontier) seen.add(row + ',' + column);
+  let sampleCount = 0;
+  let truncated = false;
+
+  while (frontier.length && sampleCount < profile.maxSamples) {
+    const available = profile.maxSamples - sampleCount;
+    const batch = selectSamples(frontier, Math.min(frontier.length, available));
+    const skippedAtThisEdge = batch.length < frontier.length;
+    const nextFrontier = [];
+    for (const [row, column] of batch) {
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      const point = gridPoint(origin, row, column, cellMeters);
+      const route = outsideChina(point.lng, point.lat)
+        ? null
+        : await queryRoute(origin, point, activeMode, cityCode, departure, signal);
+      sampleCount += 1;
+      const cell = {
+        row,
+        column,
+        lat: point.lat,
+        lng: point.lng,
+        durationSeconds: route?.durationSeconds ?? null,
+        distanceMeters: route?.distanceMeters ?? 0,
+      };
+      cells.push(cell);
+      if (cell.durationSeconds === null || cell.durationSeconds > maxMinutes * 60) continue;
+      for (const [nextRow, nextColumn] of neighbors(row, column)) {
+        const id = nextRow + ',' + nextColumn;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        nextFrontier.push([nextRow, nextColumn]);
+      }
+    }
+    truncated = skippedAtThisEdge || nextFrontier.length > 0;
+    frontier = nextFrontier;
+  }
+
+  return {
+    cellMeters,
+    queryCount: sampleCount,
+    sampleLimit: profile.maxSamples,
+    truncated,
+    cells,
+  };
 }
 
 async function calculateReach() {
@@ -208,30 +412,17 @@ async function calculateReach() {
   elements.calculateButton.disabled = true;
   elements.calculateButton.textContent = '正在查询高德路线…';
   elements.resultTitle.textContent = '正在逐格计算实际路线时间';
-  setMapStatus('高德路线查询进行中，请稍候');
+  setMapStatus('正在向高德串行发送路线请求，降低接口调用频率');
   reachLayer.clearLayers();
-
-  const body = {
-    origin: { lat: origin.lat, lng: origin.lng },
-    mode: activeMode,
-    maxMinutes,
+  const departureParams = {
+    date: departure.getFullYear() + '-' + String(departure.getMonth() + 1).padStart(2, '0') + '-' + String(departure.getDate()).padStart(2, '0'),
+    time: String(departure.getHours()).padStart(2, '0') + '-' + String(departure.getMinutes()).padStart(2, '0'),
   };
-  if (activeMode === 'transit') {
-    body.departure = {
-      date: departure.getFullYear() + '-' + String(departure.getMonth() + 1).padStart(2, '0') + '-' + String(departure.getDate()).padStart(2, '0'),
-      time: String(departure.getHours()).padStart(2, '0') + '-' + String(departure.getMinutes()).padStart(2, '0'),
-    };
-  }
 
   try {
-    const data = await requestJson(API_BASE + '/isochrone', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: thisController.signal,
-    });
+    const data = await buildReachData(maxMinutes, departureParams, thisController.signal);
     if (thisController.signal.aborted) return;
-    if (!data.cells || data.cells.length === 0) throw new Error('高德没有返回可用路线，请换一个出发点或出发时间');
+    if (!data.cells || data.cells.length <= 1) throw new Error('高德没有返回可用路线，请换一个出发点或出发时间');
     renderReach(data);
   } catch (error) {
     if (error.name !== 'AbortError') {
@@ -302,9 +493,18 @@ async function searchPlaces(query) {
   elements.searchResults.append(loading);
 
   try {
-    const params = new URLSearchParams({ keywords: cleanQuery });
-    const data = await requestJson(API_BASE + '/search?' + params.toString());
-    const places = Array.isArray(data.places) ? data.places : [];
+    const data = await amapGet('/v3/place/text', {
+      keywords: cleanQuery,
+      offset: 8,
+      page: 1,
+      extensions: 'base',
+    });
+    const places = (data.pois || []).filter((poi) => poi.location).slice(0, 8).map((poi) => ({
+      name: String(poi.name || ''),
+      address: String(poi.address || ''),
+      city: [poi.pname, poi.cityname, poi.adname].filter((part) => typeof part === 'string' && part).join(' '),
+      location: String(poi.location),
+    }));
     elements.searchResults.replaceChildren();
     if (!places.length) {
       const empty = document.createElement('div');
@@ -337,7 +537,7 @@ async function searchPlaces(query) {
     elements.searchResults.replaceChildren();
     const message = document.createElement('div');
     message.className = 'search-message';
-    message.textContent = error.message || '地点搜索失败，请确认 Cloudflare API 已部署';
+    message.textContent = error.message || '地点搜索失败，请稍后重试';
     elements.searchResults.append(message);
   }
 }
@@ -346,15 +546,6 @@ function setDefaultDeparture() {
   const now = new Date();
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
   elements.departureTime.value = local.toISOString().slice(0, 16);
-}
-
-async function checkBackend() {
-  try {
-    const data = await requestJson(API_BASE + '/health');
-    setMapStatus(data.ready ? '高德路线服务已连接 · 搜索或点击地图开始' : '请在 Cloudflare Worker 添加加密 Secret AMAP_WEB_KEY');
-  } catch {
-    setMapStatus('等待 Cloudflare Worker API 部署 · 搜索或点击地图可先设置出发点');
-  }
 }
 
 elements.searchForm.addEventListener('submit', (event) => {
@@ -379,13 +570,20 @@ elements.modeButtons.forEach((button) => {
       item.setAttribute('aria-pressed', String(selected));
     });
     elements.departureField.hidden = activeMode !== 'transit';
+    updateGridLabel();
     clearResults('出行方式已更改 · 点击按钮重新查询高德路线');
   });
 });
 
 elements.timeRange.addEventListener('input', () => {
   updateTimeLabel();
+  updateGridLabel();
   clearResults('通勤时间已更改 · 点击按钮重新查询高德路线');
+});
+
+elements.gridSize.addEventListener('change', () => {
+  updateGridLabel();
+  clearResults('网格尺寸已更改 · 点击按钮重新查询高德路线');
 });
 
 elements.departureTime.addEventListener('change', () => {
@@ -423,5 +621,6 @@ map.on('click', (event) => {
 
 setDefaultDeparture();
 updateTimeLabel();
+updateGridLabel();
 elements.departureField.hidden = activeMode !== 'transit';
-checkBackend();
+setMapStatus(AMAP_WEB_KEY === '9ec9628db5e66650e43dea74f85a8262' ? '尚未配置高德 Web 服务 Key' : '高德 Web 服务已就绪 · 搜索或点击地图开始');

@@ -75,6 +75,19 @@
           <div class="range-ticks" aria-hidden="true"><span>10</span><span>20</span><span>30</span><span>40</span><span>50</span><span>60 分钟</span></div>
         </section>
 
+        <section class="grid-section" aria-labelledby="grid-heading">
+          <div class="grid-heading-row">
+            <label class="field-label" id="grid-heading" for="grid-size">网格大小</label>
+            <output id="grid-value" class="grid-value" for="grid-size">计算中…</output>
+          </div>
+          <select id="grid-size" class="grid-select" aria-label="选择可达范围网格大小">
+            <option value="coarse" selected>大网格 · 更省查询</option>
+            <option value="medium">中网格 · 平衡</option>
+            <option value="fine">小网格 · 更细致</option>
+          </select>
+          <p class="field-hint">网格越大，采样越稀疏；未采样区域可能遗漏。</p>
+        </section>
+
         <section id="departure-field" class="departure-field" aria-labelledby="departure-label">
           <label class="field-label" id="departure-label" for="departure-time">公交出发时间</label>
           <input id="departure-time" class="departure-input" type="datetime-local" />
@@ -103,7 +116,7 @@
 
         <div class="panel-footer">
           <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M8 7v4m0-6h.01"/></svg>
-          <p>格点耗时来自高德路线规划，不用平均速度推算。网格为抽样显示，未查询区域可能遗漏；搜索地点和路线坐标会发送给高德。</p>
+          <p>格点耗时来自高德路线规划，不用平均速度推算。网格为抽样显示，未查询区域可能遗漏；搜索地点和路线坐标会发送给高德。Web 服务 Key 随网页请求公开可见。</p>
         </div>
       </section>
 

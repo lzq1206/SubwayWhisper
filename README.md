@@ -1,33 +1,24 @@
 # SubwayWhisper · 城市通勤圈
 
-一个中文地图网页，搜索或点选出发地，再选择公交 / 地铁、骑行或驾车，以及 10–60 分钟的时间上限。页面通过 Cloudflare Worker 调用高德 Web 服务路线规划接口，按每个网格中心返回的路线耗时着色。
+静态地图网页：搜索或点选出发地，选择公交 / 地铁、骑行或驾车，再查看 10–60 分钟内的路线采样网格。GitHub Pages 可直接托管，不需要 Cloudflare Worker。
 
-## 实际数据与网格边界
+## 路线数据和网格
 
-- 驾车、骑行和公交 / 地铁分别使用高德路线规划服务；公交查询包含出发日期和时间。
-- 蓝色格点按高德返回的路线耗时分成 10 分钟档，不使用平均速度估算格点是否可达。
-- 当前高德 Web 服务 Key 对企业智图“可达圈”接口返回权限不足，因此页面采用实际路线查询构建粗网格；单次最多查询 24 个目的地点，并逐条限速以降低路线接口 QPS 超限。样本上限或较粗分辨率可能漏掉边界和不连续的可达区域，面积是已验证网格的面积总和，不是精确的连续等时圈面积。
-- 地图底图由 OpenStreetMap 提供。地点搜索和路线规划由高德处理，网页不保存位置或搜索历史。
+- 地点搜索、逆地理编码和驾车、骑行、公交 / 地铁路线直接请求高德 Web 服务；公交路线按所选出发日期和时间查询。
+- 网格内每个采样点以高德返回的路线耗时着色，颜色按 10 分钟分层。未采样区域可能遗漏，因此结果不是连续、完整的等时圈。
+- “大网格”默认最多查询 8 个路线点，“中网格”最多 12 个，“小网格”最多 16 个。单页会将高德请求串行发送，间隔至少 1.2 秒；公交查询还会额外进行一次出发城市识别。
+- OpenStreetMap 提供地图底图；地点和路线请求会发送给高德。
 
-## 本地运行
+## 高德 Key
 
-任意静态 HTTP 服务都可用于预览页面。例如：
+前端 Key 位于 `app.js`。本仓库按站点所有者的要求直接从浏览器调用高德 Web 服务，不依赖 Cloudflare Secret。Key 会出现在公开仓库源代码及浏览器网络请求中。高德说明明文配置有被滥用风险；请使用 Web 服务平台 Key，并在高德控制台监控接口额度。[高德 Web 服务 Key 文档](https://lbs.amap.com/api/webservice/guide/api/search/)
+
+## 本地预览
+
+在仓库根目录运行任意静态 HTTP 服务，例如：
 
 ~~~sh
 python -m http.server 8000
 ~~~
 
-地点搜索和路线范围还需要已经部署的 Cloudflare Worker API 与 AMAP_WEB_KEY 加密变量。
-
-## Cloudflare Worker 部署
-
-`worker.js` 将 `/api/health`、`/api/search` 和 `/api/isochrone` 分发到 `functions/api/` 中的处理器。`wrangler.toml` 将 Cloudflare Worker 入口设为 `worker.js`，Worker 名称需与 Cloudflare 控制台中的 `subwaywhisper` 一致。
-
-1. 在 Cloudflare Dashboard 打开 `subwaywhisper` Worker，**Settings → Build** 确认 Git 仓库是 `lzq1206/SubwayWhisper`、生产分支是 `main`、部署命令为 `npx wrangler deploy`。
-2. 在 Worker 的 **Settings → Variables & Secrets → Add** 添加名为 `AMAP_WEB_KEY` 的加密 Secret，值从本地 `gaode.txt` 文件复制。不要把 Key 写进 `app.js`、仓库变量文件或 GitHub Pages 产物。
-3. 保存后重新部署。当前 Worker API 地址为 `https://subwaywhisper.lzq1206.workers.dev/api`；如果更改了 Cloudflare 的 Worker 名称或 `workers.dev` 子域名，请同步修改 `app.js` 顶部的备用 API 地址。如果页面本身由此 Worker 域名打开，前端会自动使用同域 `/api`。
-4. GitHub Pages 已从 `main` 根目录发布。向 `main` 推送会分别触发 GitHub Pages 和 Cloudflare Workers Builds。
-
-## 路线服务
-
-网页中的高德 Key 仅由 Cloudflare Worker 读取。服务仅开放地点搜索和固定参数的范围计算，并限制来源、单次路线点数和查询频率。公交路线按所选出发时刻规划。提交搜索词、出发点与网格目的地点时，坐标和路线查询会发送到高德。
+打开 `http://127.0.0.1:8000/`。部署时，GitHub Pages 使用 `main` 分支根目录；推送到 `main` 后由 Pages 自动发布。
