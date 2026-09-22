@@ -1,8 +1,5 @@
 'use strict';
 
-const AMAP_WEB_KEY = '9ec9628db5e66650e43dea74f85a8262';
-const AMAP_BASE = 'https://restapi.amap.com';
-const AMAP_REQUEST_INTERVAL_MS = 1200;
 const VALHALLA_ISOCHRONE_URL = 'https://valhalla1.openstreetmap.de/isochrone';
 const VALHALLA_CLIENT_ID = 'https://lzq1206.github.io/SubwayWhisper/';
 const HERITAGE_SITES_URL = 'data/national-key-cultural-sites.json';
@@ -58,8 +55,6 @@ const MODES = {
   car: { name: '驾车', source: 'OSM 路网等时圈' },
 };
 
-let amapRequestQueue = Promise.resolve();
-let lastAmapRequestStartedAt = 0;
 let map = null;
 let arrivalRange = null;
 let origin = null;
@@ -85,16 +80,13 @@ let heritageSitesEnabled = false;
 let heritageRenderFrame = 0;
 
 const elements = {
-  searchForm: document.querySelector('#search-form'),
-  searchInput: document.querySelector('#place-search'),
-  searchResults: document.querySelector('#search-results'),
   locateButton: document.querySelector('#locate-button'),
   timeRange: document.querySelector('#time-range'),
   timeValue: document.querySelector('#time-value'),
   timeNote: document.querySelector('#time-note'),
-  modeHint: document.querySelector('#mode-hint'),
   calculateButton: document.querySelector('#calculate-button'),
   modeButtons: [...document.querySelectorAll('.mode-card')],
+  modeCurrent: document.querySelector('#mode-current'),
   resultTitle: document.querySelector('#result-title'),
   areaValue: document.querySelector('#area-value'),
   radiusValue: document.querySelector('#radius-value'),
@@ -107,8 +99,11 @@ const elements = {
   zoomOut: document.querySelector('#zoom-out'),
   overlaySelect: document.querySelector('#map-overlay'),
   worldPopLegend: document.querySelector('#worldpop-legend'),
-  controlPanel: document.querySelector('#control-panel'),
+  topBrand: document.querySelector('#top-brand'),
+  overlayPicker: document.querySelector('#map-overlay-picker'),
   bottomControlDock: document.querySelector('#bottom-control-dock'),
+  modePicker: document.querySelector('#mode-picker'),
+  moreContent: document.querySelector('#more-content'),
 };
 
 function formatNumber(value, digits = 1) {
@@ -148,7 +143,6 @@ function initializeMap() {
     const point = [Number(event.lnglat.getLng()), Number(event.lnglat.getLat())];
     const [lng, lat] = gcj02ToWgs84(point[0], point[1]);
     placeOrigin({ lat, lng });
-    elements.searchInput.value = lat.toFixed(4) + ', ' + lng.toFixed(4);
     showToast('出发点已更新');
   });
   map.on('moveend', scheduleHeritageRender);
@@ -164,14 +158,14 @@ function initializeIpCityOrigin() {
   if (!map) return;
   const searchForIpCity = () => {
     if (!AMap.CitySearch) {
-      setMapStatus('IP 城市定位不可用 · 搜索地点或点击地图设置出发点');
+      setMapStatus('IP 城市定位不可用 · 点击地图或使用定位按钮设置出发点');
       return;
     }
     const citySearch = new AMap.CitySearch();
     citySearch.getLocalCity((status, result) => {
       if (origin) return;
       if (status !== 'complete' || result?.info !== 'OK' || !result.bounds?.getCenter) {
-        setMapStatus('IP 城市定位不可用 · 搜索地点或点击地图设置出发点');
+        setMapStatus('IP 城市定位不可用 · 点击地图或使用定位按钮设置出发点');
         return;
       }
       const center = normalizeAmapPoint(result.bounds.getCenter());
@@ -180,7 +174,6 @@ function initializeIpCityOrigin() {
       const cityName = String(result.city || 'IP 所在城市').trim();
       const approximateName = cityName + ' · IP 城市范围中心（近似）';
       placeOrigin({ lat, lng }, approximateName);
-      elements.searchInput.value = approximateName;
       map.setZoomAndCenter(12, center);
       setMapStatus('IP 城市定位 · ' + cityName + ' · 起点为城市级近似位置');
     });
@@ -231,12 +224,6 @@ function updateTimeLabel() {
   const maxMinutes = Number(elements.timeRange.value);
   elements.timeValue.innerHTML = maxMinutes + ' <span>分钟</span>';
   updateRangeTrack();
-}
-
-function setModeHint() {
-  elements.modeHint.textContent = activeMode === 'transit'
-    ? '公交范围来自高德官方到达圈，按所选分钟数查询，不指定出发时刻；当前最多 45 分钟。'
-    : '范围根据 OpenStreetMap 路网计算；通行速度来自路网模型，不含实时路况。当前公共 Valhalla 服务的等时圈上限为 60 分钟。';
 }
 
 function loadAmapPlugins(plugins) {
@@ -608,62 +595,6 @@ function openHeritageDetails(site, position = site.position) {
   heritageInfoWindow.open(map, position);
 }
 
-function amapErrorMessage(code, info) {
-  const messages = {
-    '10001': '高德 Web 服务 Key 无效或已过期',
-    '10002': '当前 Key 没有该 Web 服务接口权限',
-    '10003': '高德接口今日调用量已达上限',
-    '10004': '高德接口请求过于频繁，请稍后再试',
-    '10009': '该 Key 平台类型与 Web 服务不匹配',
-    '10021': '高德账号接口 QPS 已超限，请稍后再试',
-  };
-  return messages[String(code)] || ('高德接口错误（' + (code || '未知') + '）' + (info ? '：' + info : ''));
-}
-
-function waitForRequestSlot(signal) {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new DOMException('Aborted', 'AbortError'));
-      return;
-    }
-    const delay = Math.max(0, lastAmapRequestStartedAt + AMAP_REQUEST_INTERVAL_MS - Date.now());
-    if (!delay) {
-      resolve();
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, delay);
-    function onAbort() {
-      window.clearTimeout(timer);
-      reject(new DOMException('Aborted', 'AbortError'));
-    }
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
-function amapGet(path, params, signal) {
-  const task = amapRequestQueue.then(async () => {
-    await waitForRequestSlot(signal);
-    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    lastAmapRequestStartedAt = Date.now();
-    const url = new URL(path, AMAP_BASE);
-    for (const [name, value] of Object.entries(params)) url.searchParams.set(name, String(value));
-    url.searchParams.set('key', AMAP_WEB_KEY);
-    url.searchParams.set('output', 'JSON');
-    const response = await fetch(url, { signal });
-    let data = {};
-    try { data = await response.json(); } catch {}
-    if (!response.ok || data.status !== '1' || data.infocode !== '10000') {
-      throw new Error(amapErrorMessage(data.infocode, data.info));
-    }
-    return data;
-  });
-  amapRequestQueue = task.catch(() => {});
-  return task;
-}
-
 function clearResults(message = '设置出发点后计算可达边界') {
   if (activeController) activeController.abort();
   activeController = null;
@@ -674,7 +605,7 @@ function clearResults(message = '设置出发点后计算可达边界') {
   elements.legend.hidden = true;
   elements.calculateButton.disabled = !origin || !map;
   elements.calculateButton.textContent = '计算可达边界';
-  elements.resultTitle.textContent = origin ? '等待计算可达等时圈' : '等待选择出发点';
+  elements.resultTitle.textContent = '等待计算可达等时圈';
   setMapStatus(message);
 }
 
@@ -697,7 +628,6 @@ function placeOrigin(point, name = '') {
     zIndex: 2000,
   });
   map.add(originMarker);
-  if (name) elements.searchInput.value = name;
   elements.calculateButton.disabled = false;
   clearResults('出发点已设置 · 点击地图可更换');
 }
@@ -931,11 +861,14 @@ function polygonMetrics(shapes, maxMinutes, originCoordinate) {
 function fitReachToMap() {
   if (!map || !reachOverlays.length) return;
   const isMobile = window.innerWidth <= 790;
-  const panelHeight = elements.controlPanel.getBoundingClientRect().height;
+  const topHeight = Math.max(
+    elements.topBrand.getBoundingClientRect().height,
+    elements.overlayPicker.getBoundingClientRect().height,
+  );
   const dockHeight = elements.bottomControlDock.getBoundingClientRect().height;
   const avoid = isMobile
-    ? [panelHeight + 22, 56, dockHeight + 18, 12]
-    : [panelHeight + 20, 56, dockHeight + 20, 420];
+    ? [topHeight + 18, 56, dockHeight + 18, 12]
+    : [topHeight + 20, 56, dockHeight + 20, 12];
   map.setFitView([originMarker, ...reachOverlays], true, avoid, 14);
 }
 
@@ -978,7 +911,7 @@ function renderReach(data, maxMinutes) {
 
 async function calculateReach() {
   if (!origin) {
-    showToast('先搜索或点击地图设置出发点');
+    showToast('点击地图或使用右下角定位按钮设置出发点');
     return;
   }
   if (!map) {
@@ -1055,93 +988,16 @@ function gcj02ToWgs84(lng, lat) {
   return [lng * 2 - shifted[0], lat * 2 - shifted[1]];
 }
 
-async function searchPlaces(query) {
-  const cleanQuery = query.trim();
-  if (cleanQuery.length < 2) {
-    showToast('请输入至少两个字的地点');
-    return;
-  }
-
-  elements.searchResults.hidden = false;
-  elements.searchResults.replaceChildren();
-  const loading = document.createElement('div');
-  loading.className = 'search-message';
-  loading.textContent = '正在通过高德搜索地点…';
-  elements.searchResults.append(loading);
-
-  try {
-    const data = await amapGet('/v3/place/text', {
-      keywords: cleanQuery,
-      offset: 8,
-      page: 1,
-      extensions: 'base',
-    });
-    const places = (data.pois || []).filter((poi) => poi.location).slice(0, 8).map((poi) => ({
-      name: String(poi.name || ''),
-      address: String(poi.address || ''),
-      city: [poi.pname, poi.cityname, poi.adname].filter((part) => typeof part === 'string' && part).join(' '),
-      location: String(poi.location),
-    }));
-    elements.searchResults.replaceChildren();
-    if (!places.length) {
-      const empty = document.createElement('div');
-      empty.className = 'search-message';
-      empty.textContent = '没有找到地点，换个关键词试试';
-      elements.searchResults.append(empty);
-      return;
-    }
-
-    for (const place of places) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'search-result';
-      button.setAttribute('role', 'option');
-      const name = document.createElement('strong');
-      name.textContent = place.name;
-      const address = document.createElement('span');
-      address.textContent = place.address || place.city || '';
-      button.append(name, address);
-      button.addEventListener('click', () => {
-        elements.searchResults.hidden = true;
-        const [lng, lat] = place.location.split(',').map(Number);
-        const [wgsLng, wgsLat] = gcj02ToWgs84(lng, lat);
-        placeOrigin({ lat: wgsLat, lng: wgsLng }, place.name);
-        map.setZoomAndCenter(14, [lng, lat]);
-      });
-      elements.searchResults.append(button);
-    }
-  } catch (error) {
-    elements.searchResults.replaceChildren();
-    const message = document.createElement('div');
-    message.className = 'search-message';
-    message.textContent = error.message || '地点搜索失败，请稍后重试';
-    elements.searchResults.append(message);
-  }
-}
-
-elements.searchForm.addEventListener('submit', (event) => {
-  event.preventDefault();
-  searchPlaces(elements.searchInput.value);
-});
-
-elements.searchInput.addEventListener('input', () => {
-  if (!elements.searchInput.value.trim()) elements.searchResults.hidden = true;
-});
-
-document.addEventListener('click', (event) => {
-  if (!elements.searchForm.contains(event.target)) elements.searchResults.hidden = true;
-});
-
 elements.modeButtons.forEach((button) => {
   button.addEventListener('click', () => {
     activeMode = button.dataset.mode;
+    elements.modeCurrent.textContent = MODES[activeMode].name;
     elements.modeButtons.forEach((item) => {
       const selected = item === button;
       item.classList.toggle('is-active', selected);
       item.setAttribute('aria-pressed', String(selected));
     });
     updateTimeControl();
-    setModeHint();
     clearResults('出行方式已更改 · 点击按钮重新计算边界');
   });
 });
@@ -1154,6 +1010,8 @@ elements.timeRange.addEventListener('change', () => {
 
 
 elements.overlaySelect.addEventListener('change', () => setSelectedOverlay(elements.overlaySelect.value));
+elements.modePicker.addEventListener('toggle', fitReachToMap);
+elements.moreContent.addEventListener('toggle', fitReachToMap);
 
 elements.calculateButton.addEventListener('click', calculateReach);
 elements.zoomIn.addEventListener('click', () => map?.zoomIn());
@@ -1170,16 +1028,14 @@ elements.locateButton.addEventListener('click', () => {
     elements.locateButton.disabled = false;
     const coords = { lat: position.coords.latitude, lng: position.coords.longitude };
     placeOrigin(coords, '我的当前位置');
-    elements.searchInput.value = '我的当前位置';
     map?.setZoomAndCenter(14, toAmapCoordinate(coords));
   }, (error) => {
     elements.locateButton.disabled = false;
-    const message = error.code === error.PERMISSION_DENIED ? '定位权限未开启，请在浏览器设置中允许定位' : '无法获取当前位置，请搜索地点或点击地图';
-    setMapStatus('搜索地点或点击地图开始');
+    const message = error.code === error.PERMISSION_DENIED ? '定位权限未开启，请在浏览器设置中允许定位' : '无法获取当前位置，请点击地图选择出发点';
+    setMapStatus('点击地图或使用定位按钮选择出发点');
     showToast(message, 4500);
   }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 });
 });
 
 initializeMap();
 updateTimeControl();
-setModeHint();
