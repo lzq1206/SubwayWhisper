@@ -8,6 +8,31 @@ const VALHALLA_CLIENT_ID = 'https://lzq1206.github.io/SubwayWhisper/';
 const HERITAGE_SITES_URL = 'data/national-key-cultural-sites.json';
 const WORLDPOP_IMAGE_SERVICE = 'https://worldpop.arcgis.com/arcgis/rest/services/WorldPop_Population_Density_100m/ImageServer/exportImage';
 const WORLDPOP_DATA_YEAR = 2020;
+const WORLDPOP_RENDERING_RULE = {
+  rasterFunction: 'Colormap',
+  rasterFunctionArguments: {
+    Colormap: [
+      [0, 0, 0, 0],
+      [1, 255, 247, 188],
+      [2, 254, 227, 145],
+      [3, 254, 196, 79],
+      [4, 254, 153, 41],
+      [5, 236, 112, 20],
+      [6, 204, 76, 2],
+      [7, 140, 45, 4],
+    ],
+    Raster: {
+      rasterFunction: 'Remap',
+      rasterFunctionArguments: {
+        InputRanges: [0, 1, 1, 10, 10, 50, 50, 150, 150, 500, 500, 2000, 2000, 10000, 10000, 10000000],
+        OutputValues: [0, 1, 2, 3, 4, 5, 6, 7],
+        Raster: '$$',
+      },
+      outputPixelType: 'U8',
+    },
+  },
+  outputPixelType: 'U8',
+};
 const BLUE = '#2864e8';
 const BLUE_HEX = '2864e8';
 const LAYER_OPACITIES = [0.31, 0.24, 0.18, 0.145, 0.12, 0.095, 0.075, 0.055];
@@ -77,6 +102,7 @@ const elements = {
   zoomOut: document.querySelector('#zoom-out'),
   poiHeatmapToggle: document.querySelector('#poi-heatmap-toggle'),
   worldPopToggle: document.querySelector('#worldpop-toggle'),
+  worldPopLegend: document.querySelector('#worldpop-legend'),
   heritageSitesToggle: document.querySelector('#heritage-sites-toggle'),
   hidePanelButton: document.querySelector('#hide-panel-button'),
   showPanelButton: document.querySelector('#show-panel-button'),
@@ -330,12 +356,15 @@ function worldPopTileUrl(x, y, z) {
     format: 'png32',
     time: String(Date.UTC(WORLDPOP_DATA_YEAR, 0, 1)),
     noData: '0',
+    noDataInterpretation: 'esriNoDataMatchAll',
+    renderingRule: JSON.stringify(WORLDPOP_RENDERING_RULE),
     f: 'image',
   });
   return WORLDPOP_IMAGE_SERVICE + '?' + query.toString();
 }
 
 function setWorldPopEnabled(enabled) {
+  elements.worldPopLegend.hidden = !enabled;
   if (!map) return;
   if (enabled && !worldPopLayer) {
     worldPopLayer = new AMap.TileLayer({

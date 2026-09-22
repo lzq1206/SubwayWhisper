@@ -114,6 +114,11 @@ h1 { margin: 0; color: var(--ink); font-size: 21px; line-height: 1.35; letter-sp
 .overlay-copy { display: grid; gap: 3px; }
 .overlay-copy strong { color: #40516c; font-size: 10px; font-weight: 700; }
 .overlay-copy small { color: #95a1b2; font-size: 9px; }
+.worldpop-legend { margin: 2px 4px 8px; color: #8895a8; font-size: 8px; }
+.worldpop-legend[hidden] { display: none; }
+.worldpop-legend-gradient { height: 8px; border-radius: 99px; background: linear-gradient(90deg, #fff7bc, #fee391, #fec44f, #fe9929, #ec7014, #cc4c02, #8c2d04); }
+.worldpop-legend-values { display: flex; justify-content: space-between; margin-top: 3px; color: #78869b; font-variant-numeric: tabular-nums; }
+.worldpop-legend > small { display: block; margin-top: 3px; text-align: right; }
 .heritage-site-marker { display: inline-flex; align-items: center; gap: 6px; width: max-content; height: 22px; white-space: nowrap; cursor: pointer; }
 .heritage-site-marker__dot { width: 7px; height: 7px; flex: 0 0 auto; border: 0; background: var(--marker-color, #77d9b7); }
 .heritage-site-marker__dot--circle { border-radius: 50%; }

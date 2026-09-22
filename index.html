@@ -90,9 +90,14 @@
             <span class="switch"><input id="poi-heatmap-toggle" type="checkbox" /><span aria-hidden="true"></span></span>
           </label>
           <label class="overlay-option" for="worldpop-toggle">
-            <span class="overlay-copy"><strong>人口地图</strong><small>WorldPop 全球 100 米人口密度 · 2020 年数据</small></span>
+            <span class="overlay-copy"><strong>人口地图</strong><small>WorldPop 全球人口密度 · 2020 年估算</small></span>
             <span class="switch"><input id="worldpop-toggle" type="checkbox" /><span aria-hidden="true"></span></span>
           </label>
+          <div id="worldpop-legend" class="worldpop-legend" hidden>
+            <div class="worldpop-legend-gradient" aria-hidden="true"></div>
+            <div class="worldpop-legend-values" aria-hidden="true"><span>0</span><span>10</span><span>50</span><span>150</span><span>500</span><span>2k</span><span>10k+</span></div>
+            <small>人口数 / 平方公里</small>
+          </div>
           <label class="overlay-option" for="heritage-sites-toggle">
             <span class="overlay-copy"><strong>全国重点文保单位</strong><small>5,066 处 · 批次颜色、类别图形，放大后显示名称</small></span>
             <span class="switch"><input id="heritage-sites-toggle" type="checkbox" /><span aria-hidden="true"></span></span>
