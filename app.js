@@ -318,14 +318,25 @@ function queryArrivalRange(center, minutes, signal) {
         reject(new DOMException('Aborted', 'AbortError'));
         return;
       }
-      if (status !== 'complete' || !Array.isArray(result?.bounds) || !result.bounds.length) {
-        reject(new Error(result?.info || '高德没有返回公交可达边界，请换一个出发点或缩短时间'));
+      // ArrivalRange can return usable polygons with status "no_data"; follow the official sample and trust bounds.
+      if (!Array.isArray(result?.bounds) || !result.bounds.length) {
+        const info = result?.info && result.info !== 'OK' ? result.info : '高德没有返回公交可达边界，请换一个出发点或缩短时间';
+        reject(new Error(info));
         return;
       }
       const shapes = result.bounds.map((path) => {
-        const ring = Array.isArray(path) ? path.map(normalizeAmapPoint).filter(Boolean) : [];
-        return { minutes, polygons: ring.length >= 3 ? [[ring]] : [] };
-      }).filter((shape) => shape.polygons.length);
+        if (!Array.isArray(path) || !path.length) return null;
+        const first = path[0];
+        const firstIsPoint = Array.isArray(first)
+          ? first.length >= 2 && Number.isFinite(Number(first[0])) && Number.isFinite(Number(first[1]))
+          : Boolean(first && typeof first.getLng === 'function' && typeof first.getLat === 'function')
+            || Boolean(first && Number.isFinite(Number(first.lng)) && Number.isFinite(Number(first.lat)));
+        const rings = firstIsPoint ? [path] : path;
+        const normalizedRings = rings.map((ring) => Array.isArray(ring)
+          ? ring.map(normalizeAmapPoint).filter((point) => point && point.every(Number.isFinite))
+          : []).filter((ring) => ring.length >= 3);
+        return normalizedRings.length ? { minutes, polygons: [normalizedRings] } : null;
+      }).filter(Boolean);
       if (!shapes.length) {
         reject(new Error('高德返回了无法识别的公交边界，请稍后重试'));
         return;
@@ -452,6 +463,8 @@ function fitReachToMap() {
 function renderReach(data, maxMinutes) {
   if (map && reachOverlays.length) map.remove(reachOverlays);
   reachOverlays = [];
+  const originCoordinate = toAmapCoordinate(origin);
+  const metrics = polygonMetrics(data.shapes, maxMinutes, originCoordinate);
   const orderedShapes = [...data.shapes].sort((left, right) => right.minutes - left.minutes);
 
   for (const shape of orderedShapes) {
@@ -460,7 +473,7 @@ function renderReach(data, maxMinutes) {
       const outerRing = rings[0];
       if (!outerRing || outerRing.length < 3) continue;
       const overlay = new AMap.Polygon({
-        path: outerRing,
+        path: outerRing.map((point) => point.slice()),
         strokeColor: BLUE,
         strokeOpacity: shape.minutes === maxMinutes ? 0.7 : 0.28,
         strokeWeight: shape.minutes === maxMinutes ? 1.5 : 0.8,
@@ -475,8 +488,6 @@ function renderReach(data, maxMinutes) {
   }
 
   if (!reachOverlays.length) throw new Error('没有找到可绘制的可达边界');
-  const originCoordinate = toAmapCoordinate(origin);
-  const metrics = polygonMetrics(data.shapes, maxMinutes, originCoordinate);
   elements.areaValue.textContent = formatNumber(metrics.area, metrics.area < 10 ? 1 : 0);
   elements.radiusValue.textContent = metrics.radius ? formatNumber(metrics.radius / 1000, 1) : '—';
   elements.resultTitle.textContent = originName + ' · ' + MODES[activeMode].name + ' · ' + maxMinutes + ' 分钟内';
