@@ -89,9 +89,6 @@ const elements = {
   resultTitle: document.querySelector('#result-title'),
   areaValue: document.querySelector('#area-value'),
   radiusValue: document.querySelector('#radius-value'),
-  legend: document.querySelector('#legend'),
-  legendTitle: document.querySelector('#legend-title'),
-  legendItems: document.querySelector('#legend-items'),
   mapStatus: document.querySelector('#map-status'),
   toast: document.querySelector('#toast'),
   zoomIn: document.querySelector('#zoom-in'),
@@ -351,6 +348,7 @@ function worldPopTileUrl(x, y, z) {
 
 function setWorldPopEnabled(enabled) {
   elements.worldPopLegend.hidden = !enabled;
+  elements.bottomControlDock.classList.toggle('has-population-legend', enabled);
   if (!map) return;
   if (enabled && !worldPopLayer) {
     worldPopLayer = new AMap.TileLayer({
@@ -600,7 +598,6 @@ function clearResults(message = '设置出发点后计算可达边界') {
   reachOverlays = [];
   elements.areaValue.textContent = '—';
   elements.radiusValue.textContent = '—';
-  elements.legend.hidden = true;
   elements.calculateButton.disabled = !origin || !map;
   elements.calculateButton.textContent = '计算可达边界';
   elements.resultTitle.textContent = '等待计算可达等时圈';
@@ -642,26 +639,6 @@ function opacityForTime(minutes, maxMinutes) {
   const interval = 10;
   const tier = Math.max(1, Math.ceil(minutes / interval));
   return LAYER_OPACITIES[Math.min(tier - 1, LAYER_OPACITIES.length - 1)];
-}
-
-function addLegend(maxMinutes) {
-  const thresholds = getContourTimes(maxMinutes);
-  const interval = 10;
-  elements.legendItems.replaceChildren();
-  for (let index = 0; index < thresholds.length; index += 1) {
-    const item = document.createElement('div');
-    item.className = 'legend-item';
-    const swatch = document.createElement('span');
-    swatch.className = 'legend-swatch';
-    swatch.style.backgroundColor = 'rgba(40, 100, 232, ' + opacityForTime(thresholds[index], maxMinutes) + ')';
-    const label = document.createElement('span');
-    const start = index * interval;
-    label.textContent = start + '–' + thresholds[index] + ' 分钟';
-    item.append(swatch, label);
-    elements.legendItems.append(item);
-  }
-  elements.legendTitle.innerHTML = '<span class="legend-pin" aria-hidden="true">●</span> ' + MODES[activeMode].source;
-  elements.legend.hidden = false;
 }
 
 function delay(milliseconds, signal) {
@@ -860,10 +837,11 @@ function fitReachToMap() {
   if (!map || !reachOverlays.length) return;
   const isMobile = window.innerWidth <= 790;
   const topHeight = elements.topBrand.getBoundingClientRect().height;
-  const dockHeight = elements.bottomControlDock.getBoundingClientRect().height;
+  const dockTop = elements.bottomControlDock.getBoundingClientRect().top;
+  const bottomAvoid = window.innerHeight - dockTop;
   const avoid = isMobile
-    ? [topHeight + 18, 56, dockHeight + 18, 12]
-    : [topHeight + 20, 56, dockHeight + 20, 12];
+    ? [topHeight + 18, 56, bottomAvoid + 18, 12]
+    : [topHeight + 20, 56, bottomAvoid + 20, 12];
   map.setFitView([originMarker, ...reachOverlays], true, avoid, 14);
 }
 
@@ -898,8 +876,6 @@ function renderReach(data, maxMinutes) {
   elements.areaValue.textContent = formatNumber(metrics.area, metrics.area < 10 ? 1 : 0);
   elements.radiusValue.textContent = metrics.radius ? formatNumber(metrics.radius / 1000, 1) : '—';
   elements.resultTitle.textContent = originName + ' · ' + MODES[activeMode].name + ' · ' + maxMinutes + ' 分钟内';
-  elements.legendTitle.innerHTML = '<span class="legend-pin" aria-hidden="true">●</span> ' + MODES[activeMode].source;
-  addLegend(maxMinutes);
   fitReachToMap();
   setMapStatus(MODES[activeMode].source + ' · ' + data.shapes.length + ' 个边界 · 查询 ' + data.queryCount + ' 次');
 }
