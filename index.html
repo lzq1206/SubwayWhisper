@@ -73,34 +73,34 @@
               <button id="calculate-button" class="calculate-button" type="button" disabled>计算可达边界</button>
             </div>
           </div>
-          <div class="dock-footer-row">
-            <p class="contour-legend-hint">交通等时圈每10分钟一个色彩梯度</p>
-            <details id="more-content" class="more-content">
-              <summary>显示更多内容</summary>
-              <div class="more-content-body">
-                <section class="results-card" aria-live="polite" aria-label="可达边界计算结果">
-                  <div class="results-heading">
-                    <span class="results-dot" aria-hidden="true"></span>
-                    <span id="result-title">等待计算可达等时圈</span>
-                  </div>
-                  <div class="stats-row">
-                    <div class="stat-item">
-                      <strong id="area-value">—</strong>
-                      <span>可达区域面积 <i>km²</i></span>
-                    </div>
-                    <div class="stat-divider"></div>
-                    <div class="stat-item">
-                      <strong id="radius-value">—</strong>
-                      <span>边界最远距离 <i>km</i></span>
-                    </div>
-                  </div>
-                </section>
-                <div class="panel-footer">
-                  <p>IP 默认点为高德返回的城市范围中心，仅供起点参考，点击地图可调整。公交边界使用高德官方到达圈；骑行和驾车边界按 OpenStreetMap 路网计算，不含实时路况。高德热力图展示当前视野内的公园 POI 采样分布，不代表实时人流。文保图层数据来自 <a href="https://github.com/lzq1206/CulturalWhisper" target="_blank" rel="noreferrer">CulturalWhisper</a>，据 <a href="https://gl.ncha.gov.cn/#/public-service" target="_blank" rel="noreferrer">国家文物局全国重点文物保护单位名单</a>整理，数据批次覆盖 1961–2019 年。路网数据：<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap 贡献者</a> / Valhalla。</p>
+          <details id="more-content" class="more-content">
+            <summary class="dock-footer-row">
+              <span class="contour-legend-hint">交通等时圈每10分钟一个色彩梯度</span>
+              <span class="more-content-label">显示更多内容</span>
+            </summary>
+            <div class="more-content-body">
+              <section class="results-card" aria-live="polite" aria-label="可达边界计算结果">
+                <div class="results-heading">
+                  <span class="results-dot" aria-hidden="true"></span>
+                  <span id="result-title">等待计算可达等时圈</span>
                 </div>
+                <div class="stats-row">
+                  <div class="stat-item">
+                    <strong id="area-value">—</strong>
+                    <span>可达区域面积 <i>km²</i></span>
+                  </div>
+                  <div class="stat-divider"></div>
+                  <div class="stat-item">
+                    <strong id="radius-value">—</strong>
+                    <span>边界最远距离 <i>km</i></span>
+                  </div>
+                </div>
+              </section>
+              <div class="panel-footer">
+                <p>IP 默认点为高德返回的城市范围中心，仅供起点参考，点击地图可调整。公交边界使用高德官方到达圈；骑行和驾车边界按 OpenStreetMap 路网计算，不含实时路况。高德热力图展示当前视野内的公园 POI 采样分布，不代表实时人流。文保图层数据来自 <a href="https://github.com/lzq1206/CulturalWhisper" target="_blank" rel="noreferrer">CulturalWhisper</a>，据 <a href="https://gl.ncha.gov.cn/#/public-service" target="_blank" rel="noreferrer">国家文物局全国重点文物保护单位名单</a>整理，数据批次覆盖 1961–2019 年。路网数据：<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap 贡献者</a> / Valhalla。</p>
               </div>
-            </details>
-          </div>
+            </div>
+          </details>
         </div>
         <div id="worldpop-legend" class="worldpop-legend" hidden>
           <div class="worldpop-legend-gradient" aria-hidden="true"></div>
