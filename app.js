@@ -236,7 +236,7 @@ async function calculateReach() {
   } catch (error) {
     if (error.name !== 'AbortError') {
       elements.resultTitle.textContent = '路线范围查询失败';
-      setMapStatus('请检查 Cloudflare Pages 的 AMAP_WEB_KEY 配置和路线 API 权限');
+      setMapStatus('请检查 Cloudflare Worker 的 AMAP_WEB_KEY Secret 配置和高德接口权限');
       showToast(error.message || '路线范围查询失败，请稍后重试', 6000);
     }
   } finally {
@@ -351,9 +351,9 @@ function setDefaultDeparture() {
 async function checkBackend() {
   try {
     const data = await requestJson(API_BASE + '/health');
-    setMapStatus(data.ready ? '高德路线服务已连接 · 搜索或点击地图开始' : '请在 Cloudflare Pages 添加加密变量 AMAP_WEB_KEY');
+    setMapStatus(data.ready ? '高德路线服务已连接 · 搜索或点击地图开始' : '请在 Cloudflare Worker 添加加密 Secret AMAP_WEB_KEY');
   } catch {
-    setMapStatus('等待 Cloudflare Pages API 部署 · 搜索或点击地图可先设置出发点');
+    setMapStatus('等待 Cloudflare Worker API 部署 · 搜索或点击地图可先设置出发点');
   }
 }
 

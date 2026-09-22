@@ -56,7 +56,7 @@ export function apiError(message, status = 502, publicMessage = message) {
 
 export async function requireKey(env) {
   const key = String(env.AMAP_WEB_KEY || '').trim();
-  if (!key) throw apiError('Missing AMap Web Service key', 503, 'Cloudflare Pages 尚未配置 AMAP_WEB_KEY 加密变量');
+  if (!key) throw apiError('Missing AMap Web Service key', 503, 'Cloudflare Worker 尚未配置 AMAP_WEB_KEY 加密 Secret');
   return key;
 }
 
