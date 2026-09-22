@@ -5,7 +5,6 @@ const AMAP_BASE = 'https://restapi.amap.com';
 const AMAP_REQUEST_INTERVAL_MS = 1200;
 const VALHALLA_ISOCHRONE_URL = 'https://valhalla1.openstreetmap.de/isochrone';
 const VALHALLA_CLIENT_ID = 'https://lzq1206.github.io/SubwayWhisper/';
-const LIGHT_POLLUTION_WMS_URL = 'https://www.lightpollutionmap.info/tiles/wms';
 const HERITAGE_SITES_URL = 'data/national-key-cultural-sites.json';
 const BLUE = '#2864e8';
 const BLUE_HEX = '2864e8';
@@ -21,7 +20,6 @@ const HERITAGE_CATEGORY_SHAPES = {
 const TRANSIT_MAX_MINUTES = 45;
 const ROAD_MAX_MINUTES = 60;
 const MIN_TIME_MINUTES = 10;
-const PARK_HEATMAP_RADIUS_METERS = 5000;
 const TRANSIT_QUERY_GAP_MS = 350;
 const MODES = {
   transit: { name: '公交 / 地铁', source: '高德公交到达圈' },
@@ -40,9 +38,8 @@ let reachOverlays = [];
 let activeMode = 'transit';
 let toastTimeout = 0;
 let activeController = null;
-let lightPollutionLayer = null;
 let poiHeatmapLayer = null;
-let poiHeatmapSearch = null;
+let poiHeatmapRefreshTimer = null;
 let poiHeatmapRequestId = 0;
 let heritageSites = null;
 let heritageLoadPromise = null;
@@ -75,7 +72,6 @@ const elements = {
   toast: document.querySelector('#toast'),
   zoomIn: document.querySelector('#zoom-in'),
   zoomOut: document.querySelector('#zoom-out'),
-  lightPollutionToggle: document.querySelector('#light-pollution-toggle'),
   poiHeatmapToggle: document.querySelector('#poi-heatmap-toggle'),
   heritageSitesToggle: document.querySelector('#heritage-sites-toggle'),
   hidePanelButton: document.querySelector('#hide-panel-button'),
@@ -124,6 +120,8 @@ function initializeMap() {
     showToast('出发点已更新');
   });
   map.on('moveend', scheduleHeritageRender);
+  map.on('moveend', schedulePoiHeatmapRefresh);
+  map.on('zoomend', schedulePoiHeatmapRefresh);
   map.on('zoomchange', scheduleHeritageRender);
   setMapStatus('高德地图就绪 · 正在根据设备 IP 匹配所在城市');
   initializeIpCityOrigin();
@@ -178,7 +176,8 @@ function updateTimeControl() {
   const tickContainer = document.querySelector('.range-ticks');
   tickContainer.replaceChildren(...ticks.map((tick) => {
     const label = document.createElement('span');
-    label.textContent = tick === max ? tick + ' 分钟' : String(tick);
+    label.textContent = String(tick);
+    label.style.left = ((tick - MIN_TIME_MINUTES) / (max - MIN_TIME_MINUTES) * 100) + '%';
     return label;
   }));
   elements.timeNote.textContent = activeMode === 'transit'
@@ -192,7 +191,7 @@ function updateRangeTrack() {
   const max = Number(elements.timeRange.max);
   const value = Number(elements.timeRange.value);
   const percent = ((value - min) / (max - min)) * 100;
-  elements.timeRange.style.setProperty('--range-progress', percent + '%');
+  elements.timeRange.style.setProperty('--range-progress', 'calc(' + percent + '% + ' + (8 - 16 * percent / 100) + 'px)');
 }
 
 function updateTimeLabel() {
@@ -205,32 +204,6 @@ function setModeHint() {
   elements.modeHint.textContent = activeMode === 'transit'
     ? '公交范围来自高德官方到达圈，按所选分钟数查询，不指定出发时刻；当前最多 45 分钟。'
     : '范围根据 OpenStreetMap 路网计算；通行速度来自路网模型，不含实时路况。当前公共 Valhalla 服务的等时圈上限为 60 分钟。';
-}
-
-function setLightPollutionEnabled(enabled) {
-  if (!map) return;
-  if (enabled && !lightPollutionLayer) {
-    lightPollutionLayer = new AMap.TileLayer.WMS({
-      url: LIGHT_POLLUTION_WMS_URL,
-      blend: false,
-      tileSize: 256,
-      zooms: [3, 20],
-      params: {
-        VERSION: '1.1.1',
-        LAYERS: 'PostGIS:SB_2025',
-        TILED: true,
-        STYLES: 'WA',
-        SRS: 'EPSG:3857',
-        FORMAT: 'image/png',
-        TRANSPARENT: true,
-      },
-      opacity: 0.6,
-      zIndex: 16,
-    });
-    map.add(lightPollutionLayer);
-  }
-  if (enabled) lightPollutionLayer?.show();
-  else lightPollutionLayer?.hide();
 }
 
 function loadAmapPlugins(plugins) {
@@ -256,70 +229,78 @@ function loadAmapPlugins(plugins) {
   });
 }
 
-function searchNearbyParkHeatmapPoints() {
+function schedulePoiHeatmapRefresh() {
+  if (!elements.poiHeatmapToggle.checked) return;
+  ++poiHeatmapRequestId;
+  window.clearTimeout(poiHeatmapRefreshTimer);
+  poiHeatmapRefreshTimer = window.setTimeout(() => void setPoiHeatmapEnabled(true), 600);
+}
+
+function searchHeatmapPage(bounds, pageIndex) {
   return new Promise((resolve, reject) => {
-    if (!poiHeatmapSearch) {
-      poiHeatmapSearch = new AMap.PlaceSearch({
-        type: '公园',
-        pageSize: 50,
-        pageIndex: 1,
-        extensions: 'base',
-        showCover: false,
-      });
-    }
-
-    poiHeatmapSearch.searchNearBy('公园', map.getCenter(), PARK_HEATMAP_RADIUS_METERS, (status, result) => {
-      if (status !== 'complete') {
-        reject(new Error(result?.info || '高德周边公园搜索失败'));
-        return;
-      }
-
-      const points = (result?.poiList?.pois || []).map((poi) => {
-        const location = poi.location;
-        const lng = typeof location?.getLng === 'function' ? location.getLng() : Number(location?.lng ?? poi.lng);
-        const lat = typeof location?.getLat === 'function' ? location.getLat() : Number(location?.lat ?? poi.lat);
-        return { lng, lat, count: 1 };
-      }).filter((point) => Number.isFinite(point.lng) && Number.isFinite(point.lat));
-
-      if (!points.length) {
-        reject(new Error('地图中心 5 公里内没有可绘制的公园点位'));
-        return;
-      }
-      resolve(points);
+    const timeout = window.setTimeout(() => reject(new Error('高德热力图查询超时，请移动地图重试')), 12000);
+    const search = new AMap.PlaceSearch({ type: '公园', pageSize: 50, pageIndex, extensions: 'base', showCover: false });
+    search.searchInBounds('公园', bounds, (status, result) => {
+      window.clearTimeout(timeout);
+      if (status === 'no_data') resolve({ pois: [], count: 0 });
+      else if (status === 'complete') resolve(result?.poiList || { pois: [], count: 0 });
+      else reject(new Error(result?.info || '高德热力图查询失败'));
     });
   });
 }
 
+async function searchViewportHeatmapPoints(requestId) {
+  const bounds = map.getBounds();
+  const sw = bounds.getSouthWest();
+  const ne = bounds.getNorthEast();
+  const midLng = (sw.getLng() + ne.getLng()) / 2;
+  const midLat = (sw.getLat() + ne.getLat()) / 2;
+  const points = new Map();
+  // Split the viewport so a dense city center cannot consume the entire result limit.
+  for (const [west, east] of [[sw.getLng(), midLng], [midLng, ne.getLng()]]) {
+    for (const [south, north] of [[sw.getLat(), midLat], [midLat, ne.getLat()]]) {
+      const cell = new AMap.Bounds([west, south], [east, north]);
+      for (let page = 1; page <= 2; page++) {
+        if (requestId !== poiHeatmapRequestId) return [];
+        const result = await searchHeatmapPage(cell, page);
+        for (const poi of result.pois || []) {
+          const location = poi.location;
+          const lng = Number(location?.getLng?.() ?? location?.lng);
+          const lat = Number(location?.getLat?.() ?? location?.lat);
+          if (Number.isFinite(lng) && Number.isFinite(lat)) {
+            points.set(poi.id || lng + ',' + lat, { lng, lat, count: 1 });
+          }
+        }
+        if ((result.pois || []).length < 50 || Number(result.count) <= page * 50) break;
+      }
+    }
+  }
+  return [...points.values()];
+}
+
 async function setPoiHeatmapEnabled(enabled) {
   if (!map) return;
+  window.clearTimeout(poiHeatmapRefreshTimer);
   const requestId = ++poiHeatmapRequestId;
   if (!enabled) {
     poiHeatmapLayer?.hide();
     return;
   }
-
   try {
     await loadAmapPlugins(['AMap.Heatmap', 'AMap.PlaceSearch']);
     if (requestId !== poiHeatmapRequestId || !elements.poiHeatmapToggle.checked) return;
-    const points = await searchNearbyParkHeatmapPoints();
+    const points = await searchViewportHeatmapPoints(requestId);
     if (requestId !== poiHeatmapRequestId || !elements.poiHeatmapToggle.checked) return;
-
     if (!poiHeatmapLayer) {
-      poiHeatmapLayer = new AMap.Heatmap(map, {
-        radius: 25,
-        opacity: [0, 0.8],
-        zooms: [3, 20],
-        zIndex: 28,
-      });
+      poiHeatmapLayer = new AMap.Heatmap(map, { radius: 25, opacity: [0, 0.8], zooms: [3, 20], zIndex: 28 });
     }
     poiHeatmapLayer.setDataSet({ data: points, max: 10 });
     poiHeatmapLayer.show();
-    showToast('高德公园热力图已加载：' + points.length + ' 个点位（地图中心周边 5 公里）');
+    showToast(points.length ? '高德热力图已更新：当前视野 ' + points.length + ' 个 POI（最多采样 400 个）' : '当前视野没有可绘制的公园 POI');
   } catch (error) {
     if (requestId !== poiHeatmapRequestId) return;
-    elements.poiHeatmapToggle.checked = false;
     poiHeatmapLayer?.hide();
-    showToast(error.message || '高德公园热力图加载失败，请稍后重试', 6500);
+    showToast(error.message || '高德热力图加载失败，请移动地图重试', 6500);
   }
 }
 
@@ -1095,9 +1076,6 @@ elements.timeRange.addEventListener('change', () => {
   clearResults('通勤时间已更改 · 点击按钮重新计算边界');
 });
 
-elements.lightPollutionToggle.addEventListener('change', () => {
-  setLightPollutionEnabled(elements.lightPollutionToggle.checked);
-});
 
 elements.poiHeatmapToggle.addEventListener('change', () => {
   void setPoiHeatmapEnabled(elements.poiHeatmapToggle.checked);
