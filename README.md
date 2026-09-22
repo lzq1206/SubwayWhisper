@@ -25,7 +25,7 @@ python -m http.server 8000
 
 1. 在 Cloudflare Dashboard 打开 `subwaywhisper` Worker，**Settings → Build** 确认 Git 仓库是 `lzq1206/SubwayWhisper`、生产分支是 `main`、部署命令为 `npx wrangler deploy`。
 2. 在 Worker 的 **Settings → Variables & Secrets → Add** 添加名为 `AMAP_WEB_KEY` 的加密 Secret，值从本地 `gaode.txt` 文件复制。不要把 Key 写进 `app.js`、仓库变量文件或 GitHub Pages 产物。
-3. 保存后重新部署。Worker 的 `workers.dev` 地址可在 Overview 中查看；如果前端使用 GitHub Pages，请把 `app.js` 顶部的备用 API 地址改成该 Worker 地址加 `/api`。如果页面本身由此 Worker 域名打开，前端会自动使用同域 `/api`。
+3. 保存后重新部署。当前 Worker API 地址为 `https://subwaywhisper.lzq1206.workers.dev/api`；如果更改了 Cloudflare 的 Worker 名称或 `workers.dev` 子域名，请同步修改 `app.js` 顶部的备用 API 地址。如果页面本身由此 Worker 域名打开，前端会自动使用同域 `/api`。
 4. GitHub Pages 已从 `main` 根目录发布。向 `main` 推送会分别触发 GitHub Pages 和 Cloudflare Workers Builds。
 
 ## 路线服务

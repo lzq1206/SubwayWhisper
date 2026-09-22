@@ -4,7 +4,7 @@ const API_BASE = window.SUBWAY_API_BASE || (
   window.location.hostname.endsWith('.pages.dev')
     || window.location.hostname.endsWith('.workers.dev')
     ? window.location.origin + '/api'
-    : 'https://subwaywhisper.pages.dev/api'
+    : 'https://subwaywhisper.lzq1206.workers.dev/api'
 );
 const MODES = {
   transit: { name: '公交 / 地铁' },
