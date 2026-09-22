@@ -5,11 +5,14 @@ const AMAP_BASE = 'https://restapi.amap.com';
 const AMAP_REQUEST_INTERVAL_MS = 1200;
 const VALHALLA_ISOCHRONE_URL = 'https://valhalla1.openstreetmap.de/isochrone';
 const VALHALLA_CLIENT_ID = 'https://lzq1206.github.io/SubwayWhisper/';
+const NASA_CITY_LIGHTS_TILE_URL = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_CityLights_2012/default/2012-04-01/GoogleMapsCompatible_Level8/[z]/[y]/[x].jpg';
 const BLUE = '#2864e8';
 const BLUE_HEX = '2864e8';
-const LAYER_OPACITIES = [0.31, 0.24, 0.18, 0.13, 0.09, 0.055];
+const LAYER_OPACITIES = [0.31, 0.24, 0.18, 0.145, 0.12, 0.095, 0.075, 0.055];
 const TRANSIT_MAX_MINUTES = 45;
 const ROAD_MAX_MINUTES = 60;
+const EXTENDED_TIME_OPTIONS = [90, 120, 180, 240];
+const LONG_CONTOUR_INTERVAL_MINUTES = 30;
 const TRANSIT_QUERY_GAP_MS = 350;
 const MODES = {
   transit: { name: '公交 / 地铁', source: '高德公交到达圈' },
@@ -28,6 +31,8 @@ let reachOverlays = [];
 let activeMode = 'transit';
 let toastTimeout = 0;
 let activeController = null;
+let lightPollutionLayer = null;
+let trafficHeatmapLayer = null;
 
 const elements = {
   searchForm: document.querySelector('#search-form'),
@@ -36,6 +41,7 @@ const elements = {
   locateButton: document.querySelector('#locate-button'),
   timeRange: document.querySelector('#time-range'),
   timeValue: document.querySelector('#time-value'),
+  timeNote: document.querySelector('#time-note'),
   modeHint: document.querySelector('#mode-hint'),
   calculateButton: document.querySelector('#calculate-button'),
   modeButtons: [...document.querySelectorAll('.mode-card')],
@@ -49,6 +55,11 @@ const elements = {
   toast: document.querySelector('#toast'),
   zoomIn: document.querySelector('#zoom-in'),
   zoomOut: document.querySelector('#zoom-out'),
+  lightPollutionToggle: document.querySelector('#light-pollution-toggle'),
+  trafficHeatmapToggle: document.querySelector('#traffic-heatmap-toggle'),
+  hidePanelButton: document.querySelector('#hide-panel-button'),
+  showPanelButton: document.querySelector('#show-panel-button'),
+  controlPanel: document.querySelector('#control-panel'),
 };
 
 function formatNumber(value, digits = 1) {
@@ -75,8 +86,7 @@ function initializeMap() {
   }
 
   map = new AMap.Map('map', {
-    zoom: 12,
-    center: wgs84ToGcj02(121.4737, 31.2304),
+    zoom: 11,
     mapStyle: 'amap://styles/normal',
     features: ['bg', 'point', 'road', 'building'],
     viewMode: '2D',
@@ -92,7 +102,37 @@ function initializeMap() {
     elements.searchInput.value = lat.toFixed(4) + ', ' + lng.toFixed(4);
     showToast('出发点已更新');
   });
-  setMapStatus('高德地图就绪 · 搜索地点或点击地图开始');
+  setMapStatus('高德地图就绪 · 正在根据设备 IP 匹配所在城市');
+  initializeIpCityOrigin();
+}
+
+function initializeIpCityOrigin() {
+  if (!map) return;
+  const searchForIpCity = () => {
+    if (!AMap.CitySearch) {
+      setMapStatus('IP 城市定位不可用 · 搜索地点或点击地图设置出发点');
+      return;
+    }
+    const citySearch = new AMap.CitySearch();
+    citySearch.getLocalCity((status, result) => {
+      if (origin) return;
+      if (status !== 'complete' || result?.info !== 'OK' || !result.bounds?.getCenter) {
+        setMapStatus('IP 城市定位不可用 · 搜索地点或点击地图设置出发点');
+        return;
+      }
+      const center = normalizeAmapPoint(result.bounds.getCenter());
+      if (!center || !center.every(Number.isFinite)) return;
+      const [lng, lat] = gcj02ToWgs84(center[0], center[1]);
+      const cityName = String(result.city || 'IP 所在城市').trim();
+      const approximateName = cityName + ' · IP 城市范围中心（近似）';
+      placeOrigin({ lat, lng }, approximateName);
+      elements.searchInput.value = approximateName;
+      map.setZoomAndCenter(12, center);
+      setMapStatus('IP 城市定位 · ' + cityName + ' · 起点为城市级近似位置');
+    });
+  };
+  if (AMap.CitySearch) searchForIpCity();
+  else AMap.plugin('AMap.CitySearch', searchForIpCity);
 }
 
 function currentLimit() {
@@ -100,40 +140,88 @@ function currentLimit() {
 }
 
 function updateTimeControl() {
-  const max = currentLimit();
-  elements.timeRange.max = String(max);
-  elements.timeRange.step = activeMode === 'transit' ? '5' : '10';
-  if (Number(elements.timeRange.value) > max) elements.timeRange.value = String(max);
-
-  const ticks = activeMode === 'transit' ? [10, 20, 30, 40, 45] : [10, 20, 30, 40, 50, 60];
-  const tickContainer = document.querySelector('.range-ticks');
-  tickContainer.replaceChildren();
-  for (const tick of ticks) {
-    const label = document.createElement('span');
-    label.textContent = tick === max ? tick + ' 分钟' : String(tick);
-    tickContainer.append(label);
+  const previousValue = Number(elements.timeRange.value) || 30;
+  const supportedTimes = activeMode === 'transit' ? [10, 20, 30, 40, 45] : [10, 20, 30, 40, 50, 60];
+  elements.timeRange.replaceChildren();
+  const supportedGroup = document.createElement('optgroup');
+  supportedGroup.label = activeMode === 'transit' ? '公交 / 地铁 · 最多 45 分钟' : '当前可查询 · 最多 60 分钟';
+  for (const minutes of supportedTimes) {
+    const option = document.createElement('option');
+    option.value = String(minutes);
+    option.textContent = minutes + ' 分钟';
+    supportedGroup.append(option);
   }
+  elements.timeRange.append(supportedGroup);
+  if (activeMode !== 'transit') {
+    const extendedGroup = document.createElement('optgroup');
+    extendedGroup.label = '长时段 · 需配置支持 60 分钟以上的路网服务';
+    for (const minutes of EXTENDED_TIME_OPTIONS) {
+      const option = document.createElement('option');
+      option.value = String(minutes);
+      option.textContent = minutes + ' 分钟 · 暂不可用';
+      option.disabled = true;
+      extendedGroup.append(option);
+    }
+    elements.timeRange.append(extendedGroup);
+  }
+  elements.timeRange.value = String(supportedTimes.includes(previousValue) ? previousValue : 30);
+  elements.timeNote.textContent = activeMode === 'transit'
+    ? '高德公交到达圈目前最多支持 45 分钟。'
+    : '90、120、180、240 分钟选项因当前公共路网服务上限暂不可用；启用后每 30 分钟一圈。';
   updateTimeLabel();
-}
-
-function updateRangeTrack() {
-  const min = Number(elements.timeRange.min);
-  const max = Number(elements.timeRange.max);
-  const value = Number(elements.timeRange.value);
-  const percent = ((value - min) / (max - min)) * 100;
-  elements.timeRange.style.setProperty('--range-progress', percent + '%');
 }
 
 function updateTimeLabel() {
   const maxMinutes = Number(elements.timeRange.value);
   elements.timeValue.innerHTML = maxMinutes + ' <span>分钟</span>';
-  updateRangeTrack();
 }
 
 function setModeHint() {
   elements.modeHint.textContent = activeMode === 'transit'
     ? '公交范围来自高德官方到达圈，按所选分钟数查询，不指定出发时刻；当前最多 45 分钟。'
-    : '范围根据 OpenStreetMap 路网计算；通行速度来自路网模型，不含实时路况。';
+    : '范围根据 OpenStreetMap 路网计算；通行速度来自路网模型，不含实时路况。当前公共 Valhalla 服务的等时圈上限为 60 分钟；90 分钟以上不可用时不会用估算边界替代。';
+}
+
+function setLightPollutionEnabled(enabled) {
+  if (!map) return;
+  if (enabled && !lightPollutionLayer) {
+    lightPollutionLayer = new AMap.TileLayer({
+      tileUrl: NASA_CITY_LIGHTS_TILE_URL,
+      dataZooms: [1, 8],
+      zooms: [3, 18],
+      opacity: 0.48,
+      zIndex: 24,
+    });
+    map.add(lightPollutionLayer);
+  }
+  if (enabled) lightPollutionLayer?.show();
+  else lightPollutionLayer?.hide();
+}
+
+function setTrafficHeatmapEnabled(enabled) {
+  if (!map) return;
+  if (enabled && !trafficHeatmapLayer) {
+    trafficHeatmapLayer = new AMap.TileLayer.Traffic({
+      autoRefresh: true,
+      interval: 180,
+      opacity: 0.58,
+      zIndex: 28,
+    });
+    map.add(trafficHeatmapLayer);
+  }
+  if (enabled) trafficHeatmapLayer?.show();
+  else trafficHeatmapLayer?.hide();
+}
+
+function setControlPanelHidden(hidden) {
+  document.querySelector('.map-shell').classList.toggle('panel-hidden', hidden);
+  elements.controlPanel.setAttribute('aria-hidden', String(hidden));
+  elements.controlPanel.inert = hidden;
+  elements.showPanelButton.hidden = !hidden;
+  elements.showPanelButton.setAttribute('aria-expanded', String(!hidden));
+  if (hidden) elements.showPanelButton.focus();
+  else elements.hidePanelButton.focus();
+  window.setTimeout(() => map?.resize(), 240);
 }
 
 function amapErrorMessage(code, info) {
@@ -232,27 +320,30 @@ function placeOrigin(point, name = '') {
 
 function getContourTimes(maxMinutes) {
   const times = [];
-  for (let minutes = 10; minutes < maxMinutes; minutes += 10) times.push(minutes);
+  const interval = maxMinutes > ROAD_MAX_MINUTES ? LONG_CONTOUR_INTERVAL_MINUTES : 10;
+  for (let minutes = interval; minutes < maxMinutes; minutes += interval) times.push(minutes);
   if (!times.includes(maxMinutes)) times.push(maxMinutes);
   return times;
 }
 
-function opacityForTime(minutes) {
-  const tier = Math.max(1, Math.ceil(minutes / 10));
+function opacityForTime(minutes, maxMinutes) {
+  const interval = maxMinutes > ROAD_MAX_MINUTES ? LONG_CONTOUR_INTERVAL_MINUTES : 10;
+  const tier = Math.max(1, Math.ceil(minutes / interval));
   return LAYER_OPACITIES[Math.min(tier - 1, LAYER_OPACITIES.length - 1)];
 }
 
 function addLegend(maxMinutes) {
   const thresholds = getContourTimes(maxMinutes);
+  const interval = maxMinutes > ROAD_MAX_MINUTES ? LONG_CONTOUR_INTERVAL_MINUTES : 10;
   elements.legendItems.replaceChildren();
   for (let index = 0; index < thresholds.length; index += 1) {
     const item = document.createElement('div');
     item.className = 'legend-item';
     const swatch = document.createElement('span');
     swatch.className = 'legend-swatch';
-    swatch.style.backgroundColor = 'rgba(40, 100, 232, ' + opacityForTime(thresholds[index]) + ')';
+    swatch.style.backgroundColor = 'rgba(40, 100, 232, ' + opacityForTime(thresholds[index], maxMinutes) + ')';
     const label = document.createElement('span');
-    const start = index * 10;
+    const start = index * interval;
     label.textContent = start + '–' + thresholds[index] + ' 分钟';
     item.append(swatch, label);
     elements.legendItems.append(item);
@@ -362,6 +453,9 @@ async function buildTransitReach(maxMinutes, signal) {
 }
 
 async function buildRoadReach(maxMinutes, signal) {
+  if (maxMinutes > ROAD_MAX_MINUTES) {
+    throw new Error('当前公共 Valhalla 服务返回 400（Exceeded max time: 60），不能提供超过 60 分钟的真实路网边界。请配置支持长时段的路网服务后再使用。');
+  }
   const thresholds = getContourTimes(maxMinutes);
   const batches = [];
   for (let index = 0; index < thresholds.length; index += 4) batches.push(thresholds.slice(index, index + 4));
@@ -453,10 +547,11 @@ function polygonMetrics(shapes, maxMinutes, originCoordinate) {
 function fitReachToMap() {
   if (!map || !reachOverlays.length) return;
   const isMobile = window.innerWidth <= 700;
+  const panelHidden = document.querySelector('.map-shell').classList.contains('panel-hidden');
   const panelHeight = document.querySelector('.control-panel').getBoundingClientRect().height;
   const avoid = isMobile
-    ? [58, panelHeight + 28, 18, 18]
-    : [58, 30, 420, 30];
+    ? [58, panelHidden ? 18 : panelHeight + 28, 18, 18]
+    : [58, 30, panelHidden ? 30 : 420, 30];
   map.setFitView([originMarker, ...reachOverlays], true, avoid, 14);
 }
 
@@ -468,7 +563,7 @@ function renderReach(data, maxMinutes) {
   const orderedShapes = [...data.shapes].sort((left, right) => right.minutes - left.minutes);
 
   for (const shape of orderedShapes) {
-    const fillOpacity = opacityForTime(shape.minutes);
+    const fillOpacity = opacityForTime(shape.minutes, maxMinutes);
     for (const rings of shape.polygons) {
       const outerRing = rings[0];
       if (!outerRing || outerRing.length < 3) continue;
@@ -667,10 +762,21 @@ elements.modeButtons.forEach((button) => {
   });
 });
 
-elements.timeRange.addEventListener('input', () => {
+elements.timeRange.addEventListener('change', () => {
   updateTimeLabel();
   clearResults('通勤时间已更改 · 点击按钮重新计算边界');
 });
+
+elements.lightPollutionToggle.addEventListener('change', () => {
+  setLightPollutionEnabled(elements.lightPollutionToggle.checked);
+});
+
+elements.trafficHeatmapToggle.addEventListener('change', () => {
+  setTrafficHeatmapEnabled(elements.trafficHeatmapToggle.checked);
+});
+
+elements.hidePanelButton.addEventListener('click', () => setControlPanelHidden(true));
+elements.showPanelButton.addEventListener('click', () => setControlPanelHidden(false));
 
 elements.calculateButton.addEventListener('click', calculateReach);
 elements.zoomIn.addEventListener('click', () => map?.zoomIn());

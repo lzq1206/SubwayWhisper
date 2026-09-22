@@ -20,7 +20,7 @@
         <button id="zoom-out" type="button" aria-label="缩小地图" title="缩小">−</button>
       </div>
 
-      <section class="control-panel" aria-labelledby="app-title">
+      <section id="control-panel" class="control-panel" aria-labelledby="app-title" aria-hidden="false">
         <header class="brand-row">
           <div class="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 32 32" fill="none"><path d="M16 28s10-9.4 10-17a10 10 0 1 0-20 0c0 7.6 10 17 10 17Z" fill="currentColor"/><circle cx="16" cy="11" r="3.6" fill="white"/><path d="M7 27h18" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/></svg>
@@ -30,6 +30,7 @@
             <h1 id="app-title">城市通勤圈</h1>
           </div>
           <span class="estimate-badge"><span></span>高德地图底图</span>
+          <button id="hide-panel-button" class="panel-icon-button" type="button" aria-label="隐藏菜单" title="隐藏菜单">×</button>
         </header>
 
         <p class="intro">选择出发点与时长，查看公交、骑行或驾车可达的真实路网边界。</p>
@@ -44,7 +45,7 @@
             </button>
           </div>
           <div id="search-results" class="search-results" role="listbox" aria-label="地点搜索结果" hidden></div>
-          <p class="field-hint">使用高德地点搜索，或直接点击地图设置出发点</p>
+          <p class="field-hint">默认点按设备 IP 匹配所在城市的近似中心；搜索街道或点击地图可精确调整</p>
         </form>
 
         <div class="section-divider"></div>
@@ -75,11 +76,23 @@
             <label class="field-label" id="time-heading" for="time-range">最长通勤时间</label>
             <output id="time-value" class="time-value" for="time-range">30 <span>分钟</span></output>
           </div>
-          <input id="time-range" class="time-range" type="range" min="10" max="45" step="5" value="30" aria-label="最长通勤时间（分钟）" />
-          <div class="range-ticks" aria-hidden="true"><span>10</span><span>20</span><span>30</span><span>40</span><span>45 分钟</span></div>
+          <select id="time-range" class="time-select" aria-label="最长通勤时间（分钟）"></select>
+          <p id="time-note" class="time-options-note">长时段边界计划按每 30 分钟一圈显示。</p>
         </section>
 
         <p id="mode-hint" class="mode-hint">公交范围来自高德官方到达圈，按所选分钟数查询，不指定出发时刻。</p>
+
+        <section class="overlay-section" aria-labelledby="overlay-heading">
+          <h2 id="overlay-heading" class="field-label">地图叠加</h2>
+          <label class="overlay-option" for="light-pollution-toggle">
+            <span class="overlay-copy"><strong>光污染参考图</strong><small>NASA 2012 夜间灯光，半透明叠加</small></span>
+            <span class="switch"><input id="light-pollution-toggle" type="checkbox" /><span aria-hidden="true"></span></span>
+          </label>
+          <label class="overlay-option" for="traffic-heatmap-toggle">
+            <span class="overlay-copy"><strong>交通热力图</strong><small>高德实时路况颜色，半透明叠加</small></span>
+            <span class="switch"><input id="traffic-heatmap-toggle" type="checkbox" /><span aria-hidden="true"></span></span>
+          </label>
+        </section>
 
         <button id="calculate-button" class="calculate-button" type="button" disabled>计算可达边界</button>
 
@@ -103,13 +116,15 @@
 
         <div class="panel-footer">
           <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M8 7v4m0-6h.01"/></svg>
-          <p>公交边界使用高德官方到达圈；骑行和驾车边界按 OpenStreetMap 路网计算，速度为路网模型值，不含实时路况。搜索地点会发送给高德，定位仅在你点击定位后使用。地图底图：高德；路网数据：<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap 贡献者</a> / Valhalla。</p>
+          <p>IP 默认点为高德返回的城市范围中心，仅供起点参考，点击地图可调整。公交边界使用高德官方到达圈；骑行和驾车边界按 OpenStreetMap 路网计算，不含实时路况。交通图层为高德实时路况；光污染参考图为 <a href="https://earthdata.nasa.gov/data/instruments/viirs" target="_blank" rel="noreferrer">NASA VIIRS 2012 夜间灯光</a>，不代表实时天空亮度。路网数据：<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap 贡献者</a> / Valhalla。</p>
         </div>
       </section>
 
       <div class="map-top-right">
         <div id="map-status" class="map-status" role="status">搜索地点或点击地图开始</div>
       </div>
+
+      <button id="show-panel-button" class="panel-show-button" type="button" aria-controls="control-panel" aria-expanded="true" hidden>显示菜单</button>
 
       <section id="legend" class="map-legend" aria-label="通勤时间图例" hidden>
         <div id="legend-title" class="legend-title"><span class="legend-pin" aria-hidden="true">●</span> 可达时间</div>
