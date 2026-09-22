@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f5f7fb" />
+    <meta name="description" content="选择一个出发地点、出行方式和时间，查看城市通勤范围的网格化估算。" />
+    <title>城市通勤圈 · SubwayWhisper</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://unpkg.com" />
+    <link rel="preconnect" href="https://tile.openstreetmap.org" />
+    <link rel="preconnect" href="https://nominatim.openstreetmap.org" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="map-shell">
+      <div id="map" role="application" aria-label="可交互城市地图"></div>
+
+      <section class="control-panel" aria-labelledby="app-title">
+        <header class="brand-row">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none"><path d="M16 28s10-9.4 10-17a10 10 0 1 0-20 0c0 7.6 10 17 10 17Z" fill="currentColor"/><circle cx="16" cy="11" r="3.6" fill="white"/><path d="M7 27h18" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/></svg>
+          </div>
+          <div class="brand-copy">
+            <span class="eyebrow">SUBWAY WHISPER</span>
+            <h1 id="app-title">城市通勤圈</h1>
+          </div>
+          <span class="estimate-badge"><span></span>时间估算</span>
+        </header>
+
+        <p class="intro">选一个出发点，看看不同交通方式在这段时间里能到哪里。</p>
+
+        <form id="search-form" class="search-form" autocomplete="off">
+          <label class="field-label" for="place-search">出发地点</label>
+          <div class="search-control">
+            <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.2 4.2"/></svg>
+            <input id="place-search" name="place" type="search" placeholder="搜索地标、街道或城市" aria-label="搜索出发地点" />
+            <button id="locate-button" class="locate-button" type="button" aria-label="使用我的当前位置" title="使用我的当前位置">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2.7v3M12 18.3v3M2.7 12h3m12.6 0h3"/></svg>
+            </button>
+          </div>
+          <div id="search-results" class="search-results" role="listbox" aria-label="地点搜索结果" hidden></div>
+          <p class="field-hint">也可以直接点击地图设置出发点</p>
+        </form>
+
+        <div class="section-divider"></div>
+
+        <fieldset class="mode-fieldset">
+          <legend class="field-label">出行方式</legend>
+          <div class="mode-options" role="group" aria-label="选择出行方式">
+            <button class="mode-card is-active" type="button" data-mode="transit" aria-pressed="true">
+              <span class="mode-icon transit-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="2.8" width="14" height="15.2" rx="4"/><path d="M8 18v2.3m8-2.3v2.3M8 7h8m-7 7h.1m6 0h.1M8 21l2-3m6 3-2-3"/></svg></span>
+              <span class="mode-name">公交 / 地铁</span>
+              <span class="mode-check" aria-hidden="true">✓</span>
+            </button>
+            <button class="mode-card" type="button" data-mode="bike" aria-pressed="false">
+              <span class="mode-icon bike-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="17" r="3.2"/><circle cx="18" cy="17" r="3.2"/><path d="m6 17 4-7h4l4 7m-8-7h-2m6 0 1-2h2m-4 2-2 7"/></svg></span>
+              <span class="mode-name">骑行</span>
+              <span class="mode-check" aria-hidden="true">✓</span>
+            </button>
+            <button class="mode-card" type="button" data-mode="car" aria-pressed="false">
+              <span class="mode-icon car-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m4 14 1.4-5a2 2 0 0 1 1.9-1.5h9.4a2 2 0 0 1 1.9 1.5L20 14v5h-2v-2H6v2H4v-5Z"/><path d="M5 13h14M7.3 11h.1m9.2 0h.1"/></svg></span>
+              <span class="mode-name">驾车</span>
+              <span class="mode-check" aria-hidden="true">✓</span>
+            </button>
+          </div>
+        </fieldset>
+
+        <section class="time-section" aria-labelledby="time-heading">
+          <div class="time-heading-row">
+            <label class="field-label" id="time-heading" for="time-range">最长通勤时间</label>
+            <output id="time-value" class="time-value" for="time-range">30 <span>分钟</span></output>
+          </div>
+          <input id="time-range" class="time-range" type="range" min="10" max="60" step="10" value="30" aria-label="最长通勤时间（分钟）" />
+          <div class="range-ticks" aria-hidden="true"><span>10</span><span>20</span><span>30</span><span>40</span><span>50</span><span>60 分钟</span></div>
+        </section>
+
+        <section class="results-card" aria-live="polite" aria-label="覆盖范围估算结果">
+          <div class="results-heading">
+            <span class="results-dot" aria-hidden="true"></span>
+            <span id="result-title">等待选择出发点</span>
+          </div>
+          <div class="stats-row">
+            <div class="stat-item">
+              <strong id="area-value">—</strong>
+              <span>预计覆盖面积 <i>km²</i></span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+              <strong id="radius-value">—</strong>
+              <span>估算最远距离 <i>km</i></span>
+            </div>
+          </div>
+        </section>
+
+        <div class="panel-footer">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M8 7v4m0-6h.01"/></svg>
+          <p>网格范围按平均速度估算，未使用实时公交班次、道路或路况数据。</p>
+        </div>
+      </section>
+
+      <div class="map-top-right">
+        <div id="map-status" class="map-status" role="status">搜索地点或点击地图开始</div>
+      </div>
+
+      <section id="legend" class="map-legend" aria-label="通勤时间图例" hidden>
+        <div class="legend-title"><span class="legend-pin" aria-hidden="true">●</span> 预计可达时间</div>
+        <div id="legend-items" class="legend-items"></div>
+      </section>
+
+      <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    </main>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="app.js" defer></script>
+  </body>
+</html>
