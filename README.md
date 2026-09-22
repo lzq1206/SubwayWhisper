@@ -1,17 +1,23 @@
 # SubwayWhisper · 城市通勤圈
 
-静态地图网页：搜索或点选出发地，选择公交 / 地铁、骑行或驾车，再查看 10–60 分钟内的路线采样网格。GitHub Pages 可直接托管，不需要 Cloudflare Worker。
+基于 GitHub Pages 的交互式通勤等时圈地图。搜索或点击地图设置出发点，选择公交 / 地铁、骑行或驾车，再选择最长出行时间；地图按 10 分钟层级显示半透明蓝色边界。
 
-## 路线数据和网格
+## 可达范围数据
 
-- 地点搜索、逆地理编码和驾车、骑行、公交 / 地铁路线直接请求高德 Web 服务；公交路线按所选出发日期和时间查询。
-- 网格内每个采样点以高德返回的路线耗时着色，颜色按 10 分钟分层。未采样区域可能遗漏，因此结果不是连续、完整的等时圈。
-- “大网格”默认最多查询 8 个路线点，“中网格”最多 12 个，“小网格”最多 16 个。单页会将高德请求串行发送，间隔至少 1.2 秒；公交查询还会额外进行一次出发城市识别。
-- OpenStreetMap 提供地图底图；地点和路线请求会发送给高德。
+- **公交 / 地铁**：使用高德地图 JS API 的 `AMap.ArrivalRange` 官方到达圈多边形，默认公交与地铁组合。该能力按时长查询，不支持指定某天某时刻；当前界面限 45 分钟。
+- **骑行 / 驾车**：使用 Valhalla 根据 OpenStreetMap 路网生成 GeoJSON 等时圈多边形，驾车使用 `auto`，骑行使用 `bicycle`。边界由道路网络计算，不绘制方格；通行速度是路网模型值，不代表实时交通。
+- **地图底图**：使用高德地图 JS API 标准底图。高德 JS API 当前没有单独的公交专用地理底图样式；地图保留默认道路、兴趣点与公交 / 地铁站点标注，通勤边界作为半透明覆盖层绘制。
+- 面积根据最外层多边形计算，仅用于概览。Valhalla 公共演示服务遵循公平使用限制，服务繁忙或限流时可以稍后重试；公开应用请求带有 `X-Client-Id` 标识。
 
 ## 高德 Key
 
-前端 Key 位于 `app.js`。本仓库按站点所有者的要求直接从浏览器调用高德 Web 服务，不依赖 Cloudflare Secret。Key 会出现在公开仓库源代码及浏览器网络请求中。高德说明明文配置有被滥用风险；请使用 Web 服务平台 Key，并在高德控制台监控接口额度。[高德 Web 服务 Key 文档](https://lbs.amap.com/api/webservice/guide/api/search/)
+按站点所有者要求，Web 服务 Key、Web 端 JS API Key 和 JS API 安全密钥均由前端直接使用。它们会出现在公开仓库源代码及浏览器请求中。请在高德控制台绑定 GitHub Pages 域名并监控额度；如果不再希望公开，须在高德控制台轮换这些凭据后再改为服务端代理。
+
+- [高德 JS API Key 准备](https://lbs.amap.com/api/javascript-api-v2/prerequisites)
+- [高德 JS API 安全密钥](https://lbs.amap.com/api/javascript-api-v2/guide/abc/jscode)
+- [高德公交到达圈参考](https://lbs.amap.com/api/javascript-api/reference/route-search)
+- [Valhalla 等时圈 API](https://valhalla.github.io/valhalla/api/isochrone/)
+- [Valhalla 演示服务说明](https://github.com/valhalla/valhalla)
 
 ## 本地预览
 
@@ -21,4 +27,4 @@
 python -m http.server 8000
 ~~~
 
-打开 `http://127.0.0.1:8000/`。部署时，GitHub Pages 使用 `main` 分支根目录；推送到 `main` 后由 Pages 自动发布。
+打开 `http://127.0.0.1:8000/`。GitHub Pages 使用 `main` 分支根目录，推送后会自动发布。

@@ -3,20 +3,32 @@
 const AMAP_WEB_KEY = '9ec9628db5e66650e43dea74f85a8262';
 const AMAP_BASE = 'https://restapi.amap.com';
 const AMAP_REQUEST_INTERVAL_MS = 1200;
-const GRID_PROFILES = {
-  coarse: { label: '大网格', multiplier: 2, maxSamples: 8 },
-  medium: { label: '中网格', multiplier: 1.5, maxSamples: 12 },
-  fine: { label: '小网格', multiplier: 1, maxSamples: 16 },
+const VALHALLA_ISOCHRONE_URL = 'https://valhalla1.openstreetmap.de/isochrone';
+const VALHALLA_CLIENT_ID = 'https://lzq1206.github.io/SubwayWhisper/';
+const BLUE = '#2864e8';
+const BLUE_HEX = '2864e8';
+const LAYER_OPACITIES = [0.31, 0.24, 0.18, 0.13, 0.09, 0.055];
+const TRANSIT_MAX_MINUTES = 45;
+const ROAD_MAX_MINUTES = 60;
+const TRANSIT_QUERY_GAP_MS = 350;
+const MODES = {
+  transit: { name: '公交 / 地铁', source: '高德公交到达圈' },
+  bike: { name: '骑行', source: 'OSM 路网等时圈' },
+  car: { name: '驾车', source: 'OSM 路网等时圈' },
 };
+
 let amapRequestQueue = Promise.resolve();
 let lastAmapRequestStartedAt = 0;
-const MODES = {
-  transit: { name: '公交 / 地铁' },
-  bike: { name: '骑行' },
-  car: { name: '驾车' },
-};
-const LAYER_OPACITIES = [0.31, 0.24, 0.18, 0.13, 0.09, 0.055];
-const BLUE = '#2864e8';
+let map = null;
+let arrivalRange = null;
+let origin = null;
+let originName = '';
+let originMarker = null;
+let reachOverlays = [];
+let activeMode = 'transit';
+let toastTimeout = 0;
+let activeController = null;
+
 const elements = {
   searchForm: document.querySelector('#search-form'),
   searchInput: document.querySelector('#place-search'),
@@ -24,35 +36,20 @@ const elements = {
   locateButton: document.querySelector('#locate-button'),
   timeRange: document.querySelector('#time-range'),
   timeValue: document.querySelector('#time-value'),
-  gridSize: document.querySelector('#grid-size'),
-  gridValue: document.querySelector('#grid-value'),
-  departureField: document.querySelector('#departure-field'),
-  departureTime: document.querySelector('#departure-time'),
+  modeHint: document.querySelector('#mode-hint'),
   calculateButton: document.querySelector('#calculate-button'),
   modeButtons: [...document.querySelectorAll('.mode-card')],
   resultTitle: document.querySelector('#result-title'),
   areaValue: document.querySelector('#area-value'),
   radiusValue: document.querySelector('#radius-value'),
   legend: document.querySelector('#legend'),
+  legendTitle: document.querySelector('#legend-title'),
   legendItems: document.querySelector('#legend-items'),
   mapStatus: document.querySelector('#map-status'),
   toast: document.querySelector('#toast'),
+  zoomIn: document.querySelector('#zoom-in'),
+  zoomOut: document.querySelector('#zoom-out'),
 };
-
-const map = L.map('map', { zoomControl: false, preferCanvas: true }).setView([31.2304, 121.4737], 12);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19,
-  attribution: '&copy; <a href=\"https://www.openstreetmap.org/copyright\" target=\"_blank\" rel=\"noreferrer\">OpenStreetMap</a>',
-}).addTo(map);
-L.control.zoom({ position: 'topright' }).addTo(map);
-
-const reachLayer = L.layerGroup().addTo(map);
-const originLayer = L.layerGroup().addTo(map);
-let origin = null;
-let originName = '';
-let activeMode = 'transit';
-let toastTimeout = 0;
-let activeController = null;
 
 function formatNumber(value, digits = 1) {
   return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: digits }).format(value);
@@ -69,30 +66,84 @@ function setMapStatus(message) {
   elements.mapStatus.textContent = message;
 }
 
-function currentGridProfile() {
-  return GRID_PROFILES[elements.gridSize.value] || GRID_PROFILES.coarse;
+function initializeMap() {
+  if (!window.AMap) {
+    setMapStatus('高德地图未加载 · 请检查 JS API Key');
+    elements.calculateButton.disabled = true;
+    showToast('高德地图 API 未能加载，请检查 JS API Key 和安全密钥设置', 7000);
+    return;
+  }
+
+  map = new AMap.Map('map', {
+    zoom: 12,
+    center: wgs84ToGcj02(121.4737, 31.2304),
+    mapStyle: 'amap://styles/normal',
+    features: ['bg', 'point', 'road', 'building'],
+    viewMode: '2D',
+    resizeEnable: true,
+    showIndoorMap: false,
+  });
+  if (AMap.Scale) map.addControl(new AMap.Scale());
+
+  map.on('click', (event) => {
+    const point = [Number(event.lnglat.getLng()), Number(event.lnglat.getLat())];
+    const [lng, lat] = gcj02ToWgs84(point[0], point[1]);
+    placeOrigin({ lat, lng });
+    elements.searchInput.value = lat.toFixed(4) + ', ' + lng.toFixed(4);
+    showToast('出发点已更新');
+  });
+  setMapStatus('高德地图就绪 · 搜索地点或点击地图开始');
 }
 
-function currentCellMeters() {
-  const scale = { transit: 100, bike: 90, car: 160 }[activeMode];
-  const rawSize = Number(elements.timeRange.value) * scale * currentGridProfile().multiplier;
-  return Math.max(600, Math.round(rawSize / 100) * 100);
+function currentLimit() {
+  return activeMode === 'transit' ? TRANSIT_MAX_MINUTES : ROAD_MAX_MINUTES;
 }
 
-function updateGridLabel() {
-  const cellKm = currentCellMeters() / 1000;
-  const profile = currentGridProfile();
-  elements.gridValue.textContent = cellKm.toFixed(1) + ' km 边长 · 最多 ' + profile.maxSamples + ' 个路线点';
+function updateTimeControl() {
+  const max = currentLimit();
+  elements.timeRange.max = String(max);
+  elements.timeRange.step = activeMode === 'transit' ? '5' : '10';
+  if (Number(elements.timeRange.value) > max) elements.timeRange.value = String(max);
+
+  const ticks = activeMode === 'transit' ? [10, 20, 30, 40, 45] : [10, 20, 30, 40, 50, 60];
+  const tickContainer = document.querySelector('.range-ticks');
+  tickContainer.replaceChildren();
+  for (const tick of ticks) {
+    const label = document.createElement('span');
+    label.textContent = tick === max ? tick + ' 分钟' : String(tick);
+    tickContainer.append(label);
+  }
+  updateTimeLabel();
+}
+
+function updateRangeTrack() {
+  const min = Number(elements.timeRange.min);
+  const max = Number(elements.timeRange.max);
+  const value = Number(elements.timeRange.value);
+  const percent = ((value - min) / (max - min)) * 100;
+  elements.timeRange.style.setProperty('--range-progress', percent + '%');
+}
+
+function updateTimeLabel() {
+  const maxMinutes = Number(elements.timeRange.value);
+  elements.timeValue.innerHTML = maxMinutes + ' <span>分钟</span>';
+  updateRangeTrack();
+}
+
+function setModeHint() {
+  elements.modeHint.textContent = activeMode === 'transit'
+    ? '公交范围来自高德官方到达圈，按所选分钟数查询，不指定出发时刻；当前最多 45 分钟。'
+    : '范围根据 OpenStreetMap 路网计算；通行速度来自路网模型，不含实时路况。';
 }
 
 function amapErrorMessage(code, info) {
   const messages = {
-    '10001': '高德 Key 无效或已过期',
+    '10001': '高德 Web 服务 Key 无效或已过期',
     '10002': '当前 Key 没有该 Web 服务接口权限',
     '10003': '高德接口今日调用量已达上限',
     '10004': '高德接口请求过于频繁，请稍后再试',
     '10009': '该 Key 平台类型与 Web 服务不匹配',
-    '10021': '高德账号接口 QPS 已超限，请稍后再试或减少同时使用人数',
+    '10021': '高德账号接口 QPS 已超限，请稍后再试',
   };
   return messages[String(code)] || ('高德接口错误（' + (code || '未知') + '）' + (info ? '：' + info : ''));
 }
@@ -141,257 +192,298 @@ function amapGet(path, params, signal) {
   return task;
 }
 
-function updateRangeTrack() {
-  const min = Number(elements.timeRange.min);
-  const max = Number(elements.timeRange.max);
-  const value = Number(elements.timeRange.value);
-  const percent = ((value - min) / (max - min)) * 100;
-  elements.timeRange.style.setProperty('--range-progress', percent + '%');
-}
-
-function updateTimeLabel() {
-  const maxMinutes = Number(elements.timeRange.value);
-  elements.timeValue.innerHTML = maxMinutes + ' <span>分钟</span>';
-  updateRangeTrack();
-}
-
-function clearResults(message = '设置出发点后计算真实路线范围') {
+function clearResults(message = '设置出发点后计算可达边界') {
   if (activeController) activeController.abort();
   activeController = null;
-  reachLayer.clearLayers();
+  if (map && reachOverlays.length) map.remove(reachOverlays);
+  reachOverlays = [];
   elements.areaValue.textContent = '—';
   elements.radiusValue.textContent = '—';
   elements.legend.hidden = true;
-  elements.calculateButton.disabled = !origin;
-  elements.calculateButton.textContent = '计算真实路线范围';
-  elements.resultTitle.textContent = origin ? '等待计算高德路线数据' : '等待选择出发点';
+  elements.calculateButton.disabled = !origin || !map;
+  elements.calculateButton.textContent = '计算可达边界';
+  elements.resultTitle.textContent = origin ? '等待计算可达等时圈' : '等待选择出发点';
   setMapStatus(message);
 }
 
-function placeOrigin(latlng, name = '') {
-  origin = L.latLng(Number(latlng.lat), Number(latlng.lng));
-  originName = name.trim() || origin.lat.toFixed(4) + ', ' + origin.lng.toFixed(4);
-  originLayer.clearLayers();
+function toAmapCoordinate(point) {
+  return wgs84ToGcj02(Number(point.lng), Number(point.lat));
+}
 
-  const marker = L.marker(origin, {
-    keyboard: true,
+function placeOrigin(point, name = '') {
+  origin = { lat: Number(point.lat), lng: Number(point.lng) };
+  originName = name.trim() || origin.lat.toFixed(4) + ', ' + origin.lng.toFixed(4);
+  if (!map) return;
+  if (originMarker) map.remove(originMarker);
+
+  const coordinate = toAmapCoordinate(origin);
+  originMarker = new AMap.Marker({
+    position: coordinate,
     title: originName || '出发点',
-    icon: L.divIcon({ className: '', html: '<span class=\"origin-marker\"></span>', iconSize: [24, 24], iconAnchor: [12, 24] }),
+    content: '<span class="origin-marker" aria-hidden="true"></span>',
+    offset: new AMap.Pixel(-12, -24),
+    zIndex: 2000,
   });
-  marker.bindTooltip(originName || '出发点', { direction: 'top', offset: [0, -17], opacity: 0.92 });
-  originLayer.addLayer(marker);
+  map.add(originMarker);
   if (name) elements.searchInput.value = name;
   elements.calculateButton.disabled = false;
   clearResults('出发点已设置 · 点击地图可更换');
 }
 
+function getContourTimes(maxMinutes) {
+  const times = [];
+  for (let minutes = 10; minutes < maxMinutes; minutes += 10) times.push(minutes);
+  if (!times.includes(maxMinutes)) times.push(maxMinutes);
+  return times;
+}
+
+function opacityForTime(minutes) {
+  const tier = Math.max(1, Math.ceil(minutes / 10));
+  return LAYER_OPACITIES[Math.min(tier - 1, LAYER_OPACITIES.length - 1)];
+}
+
 function addLegend(maxMinutes) {
-  const tiers = Math.ceil(maxMinutes / 10);
+  const thresholds = getContourTimes(maxMinutes);
   elements.legendItems.replaceChildren();
-  for (let tier = 1; tier <= tiers; tier += 1) {
+  for (let index = 0; index < thresholds.length; index += 1) {
     const item = document.createElement('div');
     item.className = 'legend-item';
     const swatch = document.createElement('span');
     swatch.className = 'legend-swatch';
-    swatch.style.backgroundColor = 'rgba(40, 100, 232, ' + LAYER_OPACITIES[tier - 1] + ')';
+    swatch.style.backgroundColor = 'rgba(40, 100, 232, ' + opacityForTime(thresholds[index]) + ')';
     const label = document.createElement('span');
-    label.textContent = tier === 1 ? '0–10 分钟' : (tier - 1) * 10 + '–' + tier * 10 + ' 分钟';
+    const start = index * 10;
+    label.textContent = start + '–' + thresholds[index] + ' 分钟';
     item.append(swatch, label);
     elements.legendItems.append(item);
   }
+  elements.legendTitle.innerHTML = '<span class="legend-pin" aria-hidden="true">●</span> ' + MODES[activeMode].source;
   elements.legend.hidden = false;
 }
 
-function fitCells(cells, cellMeters) {
-  if (!cells.length || !origin) return;
-  const points = [[origin.lat, origin.lng]];
-  for (const cell of cells) {
-    const latDelta = cellMeters / 111320 / 2;
-    const lngDelta = latDelta / Math.max(0.15, Math.cos((cell.lat * Math.PI) / 180));
-    points.push(
-      [cell.lat - latDelta, cell.lng - lngDelta],
-      [cell.lat + latDelta, cell.lng + lngDelta],
-    );
-  }
-  const isNarrow = window.innerWidth <= 700;
-  const panelHeight = document.querySelector('.control-panel').getBoundingClientRect().height;
-  map.fitBounds(points, {
-    paddingTopLeft: isNarrow ? [14, 18] : [420, 56],
-    paddingBottomRight: isNarrow ? [14, panelHeight + 42] : [30, 30],
-    maxZoom: 15,
-    animate: false,
+function delay(milliseconds, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, milliseconds);
+    function onAbort() {
+      window.clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
 
-function renderReach(data) {
-  const maxMinutes = Number(elements.timeRange.value);
-  const cellMeters = Number(data.cellMeters);
-  const cells = Array.isArray(data.cells) ? data.cells : [];
-  const reachable = cells.filter((cell) => Number.isFinite(Number(cell.durationSeconds)) && Number(cell.durationSeconds) <= maxMinutes * 60);
-  reachLayer.clearLayers();
-
-  for (const cell of reachable) {
-    const tier = Math.max(1, Math.ceil(Number(cell.durationSeconds) / 600));
-    const halfLat = cellMeters / 2 / 111320;
-    const halfLng = halfLat / Math.max(0.15, Math.cos((Number(cell.lat) * Math.PI) / 180));
-    const opacity = LAYER_OPACITIES[Math.min(tier - 1, LAYER_OPACITIES.length - 1)];
-    L.rectangle([
-      [Number(cell.lat) - halfLat, Number(cell.lng) - halfLng],
-      [Number(cell.lat) + halfLat, Number(cell.lng) + halfLng],
-    ], {
-      color: BLUE,
-      weight: 0.6,
-      opacity: 0.12 + opacity * 0.2,
-      fillColor: BLUE,
-      fillOpacity: opacity,
-      interactive: false,
-    }).addTo(reachLayer);
+function normalizeAmapPoint(point) {
+  if (Array.isArray(point)) return [Number(point[0]), Number(point[1])];
+  if (point && typeof point.getLng === 'function' && typeof point.getLat === 'function') {
+    return [Number(point.getLng()), Number(point.getLat())];
   }
-
-  const sampleArea = reachable.length * cellMeters * cellMeters / 1_000_000;
-  const maxRouteDistance = reachable.reduce((max, cell) => Math.max(max, Number(cell.distanceMeters) || 0), 0);
-  elements.areaValue.textContent = formatNumber(sampleArea, sampleArea < 10 ? 1 : 0);
-  elements.radiusValue.textContent = maxRouteDistance ? formatNumber(maxRouteDistance / 1000, 1) : '—';
-  const mode = MODES[activeMode];
-  elements.resultTitle.textContent = originName + ' · ' + mode.name + ' · ' + maxMinutes + ' 分钟内';
-  const partialText = data.truncated ? ' · 已达采样上限，边缘未完整采样' : '';
-  setMapStatus(reachable.length + ' 个网格由高德路线耗时核验 · 查询 ' + data.queryCount + ' 个路线点 · 边长 ' + (cellMeters / 1000).toFixed(1) + ' km' + partialText);
-  addLegend(maxMinutes);
-  fitCells(reachable, cellMeters);
-}
-
-function getRouteDetails(data, mode) {
-  const choices = mode === 'transit' ? (data.route?.transits || []) : (data.route?.paths || []);
-  const candidates = choices.map((choice) => {
-    const seconds = Number(choice.cost?.duration);
-    const distance = Number(choice.distance);
-    return {
-      durationSeconds: Number.isFinite(seconds) && seconds >= 0 ? seconds : null,
-      distanceMeters: Number.isFinite(distance) && distance >= 0 ? distance : 0,
-    };
-  }).filter((choice) => choice.durationSeconds !== null);
-  candidates.sort((left, right) => left.durationSeconds - right.durationSeconds);
-  return candidates[0] || null;
-}
-
-async function cityCodeForOrigin(point, signal) {
-  const [lng, lat] = wgs84ToGcj02(point.lng, point.lat);
-  const data = await amapGet('/v3/geocode/regeo', {
-    location: lng.toFixed(6) + ',' + lat.toFixed(6),
-    extensions: 'base',
-  }, signal);
-  const rawCode = data.regeocode?.addressComponent?.citycode;
-  const cityCode = Array.isArray(rawCode) ? rawCode[0] : rawCode;
-  if (!cityCode) throw new Error('无法识别出发点所在城市，请重新选择地图位置');
-  return String(cityCode);
-}
-
-async function queryRoute(start, destination, mode, cityCode, departure, signal) {
-  const [originLng, originLat] = wgs84ToGcj02(start.lng, start.lat);
-  const [destinationLng, destinationLat] = wgs84ToGcj02(destination.lng, destination.lat);
-  const params = {
-    origin: originLng.toFixed(6) + ',' + originLat.toFixed(6),
-    destination: destinationLng.toFixed(6) + ',' + destinationLat.toFixed(6),
-    show_fields: mode === 'car' ? 'cost,tmcs' : 'cost',
-  };
-  let path;
-  if (mode === 'car') {
-    path = '/v5/direction/driving';
-    params.strategy = 32;
-  } else if (mode === 'bike') {
-    path = '/v5/direction/bicycling';
-  } else {
-    path = '/v5/direction/transit/integrated';
-    params.city1 = cityCode;
-    params.city2 = cityCode;
-    params.strategy = 8;
-    params.AlternativeRoute = 1;
-    params.date = departure.date;
-    params.time = departure.time;
+  if (point && Number.isFinite(Number(point.lng)) && Number.isFinite(Number(point.lat))) {
+    return [Number(point.lng), Number(point.lat)];
   }
-  const data = await amapGet(path, params, signal);
-  return getRouteDetails(data, mode);
+  return null;
 }
 
-function gridPoint(center, row, column, cellMeters) {
-  const latitude = center.lat + row * cellMeters / 111320;
-  const metersPerDegreeLongitude = Math.max(10000, 111320 * Math.cos(center.lat * Math.PI / 180));
-  const longitude = center.lng + column * cellMeters / metersPerDegreeLongitude;
-  return { lat: latitude, lng: longitude };
-}
-
-function neighbors(row, column) {
-  const points = [];
-  for (let rowOffset = -1; rowOffset <= 1; rowOffset += 1) {
-    for (let columnOffset = -1; columnOffset <= 1; columnOffset += 1) {
-      if (rowOffset === 0 && columnOffset === 0) continue;
-      points.push([row + rowOffset, column + columnOffset]);
+function queryArrivalRange(center, minutes, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
     }
-  }
-  return points;
-}
-
-function selectSamples(points, count) {
-  const ordered = [...points].sort((left, right) => Math.atan2(left[0], left[1]) - Math.atan2(right[0], right[1]));
-  if (ordered.length <= count) return ordered;
-  const selected = [];
-  for (let index = 0; index < count; index += 1) {
-    selected.push(ordered[Math.floor((index + 0.5) * ordered.length / count)]);
-  }
-  return selected;
-}
-
-async function buildReachData(maxMinutes, departure, signal) {
-  const profile = currentGridProfile();
-  const cellMeters = currentCellMeters();
-  const cityCode = activeMode === 'transit' ? await cityCodeForOrigin(origin, signal) : '';
-  const cells = [{ row: 0, column: 0, lat: origin.lat, lng: origin.lng, durationSeconds: 0, distanceMeters: 0 }];
-  const seen = new Set(['0,0']);
-  let frontier = neighbors(0, 0);
-  for (const [row, column] of frontier) seen.add(row + ',' + column);
-  let sampleCount = 0;
-  let truncated = false;
-
-  while (frontier.length && sampleCount < profile.maxSamples) {
-    const available = profile.maxSamples - sampleCount;
-    const batch = selectSamples(frontier, Math.min(frontier.length, available));
-    const skippedAtThisEdge = batch.length < frontier.length;
-    const nextFrontier = [];
-    for (const [row, column] of batch) {
-      if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
-      const point = gridPoint(origin, row, column, cellMeters);
-      const route = outsideChina(point.lng, point.lat)
-        ? null
-        : await queryRoute(origin, point, activeMode, cityCode, departure, signal);
-      sampleCount += 1;
-      const cell = {
-        row,
-        column,
-        lat: point.lat,
-        lng: point.lng,
-        durationSeconds: route?.durationSeconds ?? null,
-        distanceMeters: route?.distanceMeters ?? 0,
-      };
-      cells.push(cell);
-      if (cell.durationSeconds === null || cell.durationSeconds > maxMinutes * 60) continue;
-      for (const [nextRow, nextColumn] of neighbors(row, column)) {
-        const id = nextRow + ',' + nextColumn;
-        if (seen.has(id)) continue;
-        seen.add(id);
-        nextFrontier.push([nextRow, nextColumn]);
+    if (!arrivalRange) {
+      if (!AMap.ArrivalRange) {
+        reject(new Error('高德公交到达圈插件未加载，请检查 JS API Key 配置'));
+        return;
       }
+      arrivalRange = new AMap.ArrivalRange();
     }
-    truncated = skippedAtThisEdge || nextFrontier.length > 0;
-    frontier = nextFrontier;
+    let settled = false;
+    function onAbort() {
+      if (settled) return;
+      settled = true;
+      reject(new DOMException('Aborted', 'AbortError'));
+    }
+    signal.addEventListener('abort', onAbort, { once: true });
+    arrivalRange.search(center, minutes, (status, result) => {
+      signal.removeEventListener('abort', onAbort);
+      if (settled) return;
+      settled = true;
+      if (signal.aborted) {
+        reject(new DOMException('Aborted', 'AbortError'));
+        return;
+      }
+      if (status !== 'complete' || !Array.isArray(result?.bounds) || !result.bounds.length) {
+        reject(new Error(result?.info || '高德没有返回公交可达边界，请换一个出发点或缩短时间'));
+        return;
+      }
+      const shapes = result.bounds.map((path) => {
+        const ring = Array.isArray(path) ? path.map(normalizeAmapPoint).filter(Boolean) : [];
+        return { minutes, polygons: ring.length >= 3 ? [[ring]] : [] };
+      }).filter((shape) => shape.polygons.length);
+      if (!shapes.length) {
+        reject(new Error('高德返回了无法识别的公交边界，请稍后重试'));
+        return;
+      }
+      resolve(shapes);
+    }, { policy: 'BUS,SUBWAY', resultType: 'polygon' });
+  });
+}
+
+async function buildTransitReach(maxMinutes, signal) {
+  const thresholds = getContourTimes(maxMinutes);
+  const center = toAmapCoordinate(origin);
+  const shapes = [];
+  for (let index = 0; index < thresholds.length; index += 1) {
+    if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    const minutes = thresholds[index];
+    setMapStatus('正在查询高德公交到达圈 · ' + minutes + ' 分钟 · ' + (index + 1) + '/' + thresholds.length);
+    const tierShapes = await queryArrivalRange(center, minutes, signal);
+    shapes.push(...tierShapes);
+    if (index < thresholds.length - 1) await delay(TRANSIT_QUERY_GAP_MS, signal);
+  }
+  return { shapes, queryCount: thresholds.length };
+}
+
+async function buildRoadReach(maxMinutes, signal) {
+  const thresholds = getContourTimes(maxMinutes);
+  const batches = [];
+  for (let index = 0; index < thresholds.length; index += 4) batches.push(thresholds.slice(index, index + 4));
+  const features = [];
+  const costing = activeMode === 'car' ? 'auto' : 'bicycle';
+
+  for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+    if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    setMapStatus('正在计算 OSM 路网等时圈 · ' + (batchIndex + 1) + '/' + batches.length);
+    const body = {
+      locations: [{ lat: origin.lat, lon: origin.lng }],
+      costing,
+      contours: batches[batchIndex].map((time) => ({ time, color: BLUE_HEX })),
+      polygons: true,
+      denoise: 0,
+      generalize: 25,
+      show_locations: false,
+    };
+    const url = VALHALLA_ISOCHRONE_URL + '?json=' + encodeURIComponent(JSON.stringify(body));
+    const response = await fetch(url, {
+      signal,
+      headers: { 'X-Client-Id': VALHALLA_CLIENT_ID },
+    });
+    let data = {};
+    try { data = await response.json(); } catch {}
+    if (!response.ok || data.error || !Array.isArray(data.features)) {
+      throw new Error(data.error || data.error_description || 'OpenStreetMap 路网服务暂不可用，请稍后重试');
+    }
+    features.push(...data.features);
   }
 
-  return {
-    cellMeters,
-    queryCount: sampleCount,
-    sampleLimit: profile.maxSamples,
-    truncated,
-    cells,
-  };
+  const shapes = features.map((feature) => {
+    const minutes = Number(feature.properties?.contour ?? feature.properties?.time);
+    const geometry = feature.geometry;
+    if (!Number.isFinite(minutes) || !geometry) return null;
+    let polygons = [];
+    if (geometry.type === 'Polygon') polygons = [geometry.coordinates];
+    if (geometry.type === 'MultiPolygon') polygons = geometry.coordinates;
+    const converted = polygons.map((rings) => rings.map((ring) => ring
+      .map((coordinate) => wgs84ToGcj02(Number(coordinate[0]), Number(coordinate[1])))
+      .filter((coordinate) => coordinate.every(Number.isFinite))))
+      .filter((rings) => rings.length && rings[0].length >= 3);
+    return converted.length ? { minutes, polygons: converted } : null;
+  }).filter(Boolean);
+
+  if (!shapes.length) throw new Error('OSM 路网没有返回可显示的等时圈，请换一个出发点或缩短时间');
+  return { shapes, queryCount: batches.length };
+}
+
+function sphericalRingAreaKm2(ring) {
+  if (!Array.isArray(ring) || ring.length < 3) return 0;
+  const earthRadiusMeters = 6371008.8;
+  let total = 0;
+  for (let index = 0; index < ring.length; index += 1) {
+    const current = ring[index];
+    const next = ring[(index + 1) % ring.length];
+    const currentLat = current[1] * Math.PI / 180;
+    const nextLat = next[1] * Math.PI / 180;
+    const deltaLng = (next[0] - current[0]) * Math.PI / 180;
+    total += deltaLng * (2 + Math.sin(currentLat) + Math.sin(nextLat));
+  }
+  return Math.abs(total * earthRadiusMeters * earthRadiusMeters / 2) / 1_000_000;
+}
+
+function haversineMeters(first, second) {
+  const radians = (degrees) => degrees * Math.PI / 180;
+  const lat1 = radians(first[1]);
+  const lat2 = radians(second[1]);
+  const dLat = lat2 - lat1;
+  const dLng = radians(second[0] - first[0]);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 6371008.8 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function polygonMetrics(shapes, maxMinutes, originCoordinate) {
+  let area = 0;
+  let radius = 0;
+  const outerShapes = shapes.filter((shape) => shape.minutes === maxMinutes);
+  for (const shape of outerShapes) {
+    for (const rings of shape.polygons) {
+      if (!rings.length) continue;
+      area += Math.max(0, sphericalRingAreaKm2(rings[0]) - rings.slice(1).reduce((sum, ring) => sum + sphericalRingAreaKm2(ring), 0));
+      for (const point of rings[0]) radius = Math.max(radius, haversineMeters(originCoordinate, point));
+    }
+  }
+  return { area, radius };
+}
+
+function fitReachToMap() {
+  if (!map || !reachOverlays.length) return;
+  const isMobile = window.innerWidth <= 700;
+  const panelHeight = document.querySelector('.control-panel').getBoundingClientRect().height;
+  const avoid = isMobile
+    ? [58, panelHeight + 28, 18, 18]
+    : [58, 30, 420, 30];
+  map.setFitView([originMarker, ...reachOverlays], true, avoid, 14);
+}
+
+function renderReach(data, maxMinutes) {
+  if (map && reachOverlays.length) map.remove(reachOverlays);
+  reachOverlays = [];
+  const orderedShapes = [...data.shapes].sort((left, right) => right.minutes - left.minutes);
+
+  for (const shape of orderedShapes) {
+    const fillOpacity = opacityForTime(shape.minutes);
+    for (const rings of shape.polygons) {
+      const outerRing = rings[0];
+      if (!outerRing || outerRing.length < 3) continue;
+      const overlay = new AMap.Polygon({
+        path: outerRing,
+        strokeColor: BLUE,
+        strokeOpacity: shape.minutes === maxMinutes ? 0.7 : 0.28,
+        strokeWeight: shape.minutes === maxMinutes ? 1.5 : 0.8,
+        fillColor: BLUE,
+        fillOpacity,
+        bubble: false,
+        zIndex: 1000 - shape.minutes,
+      });
+      map.add(overlay);
+      reachOverlays.push(overlay);
+    }
+  }
+
+  if (!reachOverlays.length) throw new Error('没有找到可绘制的可达边界');
+  const originCoordinate = toAmapCoordinate(origin);
+  const metrics = polygonMetrics(data.shapes, maxMinutes, originCoordinate);
+  elements.areaValue.textContent = formatNumber(metrics.area, metrics.area < 10 ? 1 : 0);
+  elements.radiusValue.textContent = metrics.radius ? formatNumber(metrics.radius / 1000, 1) : '—';
+  elements.resultTitle.textContent = originName + ' · ' + MODES[activeMode].name + ' · ' + maxMinutes + ' 分钟内';
+  elements.legendTitle.innerHTML = '<span class="legend-pin" aria-hidden="true">●</span> ' + MODES[activeMode].source;
+  addLegend(maxMinutes);
+  fitReachToMap();
+  setMapStatus(MODES[activeMode].source + ' · ' + data.shapes.length + ' 个边界 · 查询 ' + data.queryCount + ' 次');
 }
 
 async function calculateReach() {
@@ -399,41 +491,36 @@ async function calculateReach() {
     showToast('先搜索或点击地图设置出发点');
     return;
   }
-  const maxMinutes = Number(elements.timeRange.value);
-  const departure = new Date(elements.departureTime.value);
-  if (activeMode === 'transit' && Number.isNaN(departure.getTime())) {
-    showToast('请先选择公交出发时间');
+  if (!map) {
+    showToast('高德地图尚未加载，请检查 JS API Key 和安全密钥');
     return;
   }
-
+  const maxMinutes = Number(elements.timeRange.value);
   if (activeController) activeController.abort();
   activeController = new AbortController();
   const thisController = activeController;
   elements.calculateButton.disabled = true;
-  elements.calculateButton.textContent = '正在查询高德路线…';
-  elements.resultTitle.textContent = '正在逐格计算实际路线时间';
-  setMapStatus('正在向高德串行发送路线请求，降低接口调用频率');
-  reachLayer.clearLayers();
-  const departureParams = {
-    date: departure.getFullYear() + '-' + String(departure.getMonth() + 1).padStart(2, '0') + '-' + String(departure.getDate()).padStart(2, '0'),
-    time: String(departure.getHours()).padStart(2, '0') + '-' + String(departure.getMinutes()).padStart(2, '0'),
-  };
+  elements.calculateButton.textContent = '正在计算可达边界…';
+  elements.resultTitle.textContent = activeMode === 'transit' ? '正在查询高德公交到达圈' : '正在计算 OSM 路网等时圈';
+  if (map && reachOverlays.length) map.remove(reachOverlays);
+  reachOverlays = [];
 
   try {
-    const data = await buildReachData(maxMinutes, departureParams, thisController.signal);
+    const data = activeMode === 'transit'
+      ? await buildTransitReach(maxMinutes, thisController.signal)
+      : await buildRoadReach(maxMinutes, thisController.signal);
     if (thisController.signal.aborted) return;
-    if (!data.cells || data.cells.length <= 1) throw new Error('高德没有返回可用路线，请换一个出发点或出发时间');
-    renderReach(data);
+    renderReach(data, maxMinutes);
   } catch (error) {
     if (error.name !== 'AbortError') {
-      elements.resultTitle.textContent = '路线范围查询失败';
-      setMapStatus('路线查询失败 · 请查看提示并稍后重试');
-      showToast(error.message || '路线范围查询失败，请稍后重试', 6000);
+      elements.resultTitle.textContent = '可达边界查询失败';
+      setMapStatus('边界查询失败 · 请查看提示并稍后重试');
+      showToast(error.message || '可达边界查询失败，请稍后重试', 6500);
     }
   } finally {
     if (activeController === thisController) activeController = null;
-    elements.calculateButton.disabled = !origin;
-    elements.calculateButton.textContent = '重新计算真实路线范围';
+    elements.calculateButton.disabled = !origin || !map;
+    elements.calculateButton.textContent = '重新计算可达边界';
   }
 }
 
@@ -526,10 +613,10 @@ async function searchPlaces(query) {
       button.append(name, address);
       button.addEventListener('click', () => {
         elements.searchResults.hidden = true;
-        const [lng, lat] = String(place.location).split(',').map(Number);
+        const [lng, lat] = place.location.split(',').map(Number);
         const [wgsLng, wgsLat] = gcj02ToWgs84(lng, lat);
         placeOrigin({ lat: wgsLat, lng: wgsLng }, place.name);
-        map.setView([wgsLat, wgsLng], 14, { animate: false });
+        map.setZoomAndCenter(14, [lng, lat]);
       });
       elements.searchResults.append(button);
     }
@@ -540,12 +627,6 @@ async function searchPlaces(query) {
     message.textContent = error.message || '地点搜索失败，请稍后重试';
     elements.searchResults.append(message);
   }
-}
-
-function setDefaultDeparture() {
-  const now = new Date();
-  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-  elements.departureTime.value = local.toISOString().slice(0, 16);
 }
 
 elements.searchForm.addEventListener('submit', (event) => {
@@ -569,28 +650,20 @@ elements.modeButtons.forEach((button) => {
       item.classList.toggle('is-active', selected);
       item.setAttribute('aria-pressed', String(selected));
     });
-    elements.departureField.hidden = activeMode !== 'transit';
-    updateGridLabel();
-    clearResults('出行方式已更改 · 点击按钮重新查询高德路线');
+    updateTimeControl();
+    setModeHint();
+    clearResults('出行方式已更改 · 点击按钮重新计算边界');
   });
 });
 
 elements.timeRange.addEventListener('input', () => {
   updateTimeLabel();
-  updateGridLabel();
-  clearResults('通勤时间已更改 · 点击按钮重新查询高德路线');
-});
-
-elements.gridSize.addEventListener('change', () => {
-  updateGridLabel();
-  clearResults('网格尺寸已更改 · 点击按钮重新查询高德路线');
-});
-
-elements.departureTime.addEventListener('change', () => {
-  clearResults('公交出发时间已更改 · 点击按钮重新查询高德路线');
+  clearResults('通勤时间已更改 · 点击按钮重新计算边界');
 });
 
 elements.calculateButton.addEventListener('click', calculateReach);
+elements.zoomIn.addEventListener('click', () => map?.zoomIn());
+elements.zoomOut.addEventListener('click', () => map?.zoomOut());
 
 elements.locateButton.addEventListener('click', () => {
   if (!navigator.geolocation) {
@@ -604,7 +677,7 @@ elements.locateButton.addEventListener('click', () => {
     const coords = { lat: position.coords.latitude, lng: position.coords.longitude };
     placeOrigin(coords, '我的当前位置');
     elements.searchInput.value = '我的当前位置';
-    map.setView([coords.lat, coords.lng], 14, { animate: false });
+    map?.setZoomAndCenter(14, toAmapCoordinate(coords));
   }, (error) => {
     elements.locateButton.disabled = false;
     const message = error.code === error.PERMISSION_DENIED ? '定位权限未开启，请在浏览器设置中允许定位' : '无法获取当前位置，请搜索地点或点击地图';
@@ -613,14 +686,6 @@ elements.locateButton.addEventListener('click', () => {
   }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 });
 });
 
-map.on('click', (event) => {
-  placeOrigin(event.latlng);
-  elements.searchInput.value = event.latlng.lat.toFixed(4) + ', ' + event.latlng.lng.toFixed(4);
-  showToast('出发点已更新');
-});
-
-setDefaultDeparture();
-updateTimeLabel();
-updateGridLabel();
-elements.departureField.hidden = activeMode !== 'transit';
-setMapStatus(AMAP_WEB_KEY === '9ec9628db5e66650e43dea74f85a8262' ? '尚未配置高德 Web 服务 Key' : '高德 Web 服务已就绪 · 搜索或点击地图开始');
+initializeMap();
+updateTimeControl();
+setModeHint();

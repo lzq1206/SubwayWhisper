@@ -4,17 +4,21 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f5f7fb" />
-    <meta name="description" content="调用高德路线规划服务，按实际路线耗时查看城市通勤范围。" />
+    <meta name="description" content="使用高德公交到达圈和 OpenStreetMap 路网等时圈查看城市通勤范围。" />
     <title>城市通勤圈 · SubwayWhisper</title>
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-    <link rel="preconnect" href="https://unpkg.com" />
-    <link rel="preconnect" href="https://tile.openstreetmap.org" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <link rel="preconnect" href="https://webapi.amap.com" />
+    <link rel="preconnect" href="https://restapi.amap.com" />
+    <link rel="preconnect" href="https://valhalla1.openstreetmap.de" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <main class="map-shell">
       <div id="map" role="application" aria-label="可交互城市地图"></div>
+      <div class="map-controls" aria-label="地图缩放控制">
+        <button id="zoom-in" type="button" aria-label="放大地图" title="放大">+</button>
+        <button id="zoom-out" type="button" aria-label="缩小地图" title="缩小">−</button>
+      </div>
 
       <section class="control-panel" aria-labelledby="app-title">
         <header class="brand-row">
@@ -25,10 +29,10 @@
             <span class="eyebrow">SUBWAY WHISPER</span>
             <h1 id="app-title">城市通勤圈</h1>
           </div>
-          <span class="estimate-badge"><span></span>高德路线数据</span>
+          <span class="estimate-badge"><span></span>高德地图底图</span>
         </header>
 
-        <p class="intro">选择出发点与时间，按高德返回的路线耗时查看可达网格。</p>
+        <p class="intro">选择出发点与时长，查看公交、骑行或驾车可达的真实路网边界。</p>
 
         <form id="search-form" class="search-form" autocomplete="off">
           <label class="field-label" for="place-search">出发地点</label>
@@ -71,32 +75,15 @@
             <label class="field-label" id="time-heading" for="time-range">最长通勤时间</label>
             <output id="time-value" class="time-value" for="time-range">30 <span>分钟</span></output>
           </div>
-          <input id="time-range" class="time-range" type="range" min="10" max="60" step="10" value="30" aria-label="最长通勤时间（分钟）" />
-          <div class="range-ticks" aria-hidden="true"><span>10</span><span>20</span><span>30</span><span>40</span><span>50</span><span>60 分钟</span></div>
+          <input id="time-range" class="time-range" type="range" min="10" max="45" step="5" value="30" aria-label="最长通勤时间（分钟）" />
+          <div class="range-ticks" aria-hidden="true"><span>10</span><span>20</span><span>30</span><span>40</span><span>45 分钟</span></div>
         </section>
 
-        <section class="grid-section" aria-labelledby="grid-heading">
-          <div class="grid-heading-row">
-            <label class="field-label" id="grid-heading" for="grid-size">网格大小</label>
-            <output id="grid-value" class="grid-value" for="grid-size">计算中…</output>
-          </div>
-          <select id="grid-size" class="grid-select" aria-label="选择可达范围网格大小">
-            <option value="coarse" selected>大网格 · 更省查询</option>
-            <option value="medium">中网格 · 平衡</option>
-            <option value="fine">小网格 · 更细致</option>
-          </select>
-          <p class="field-hint">网格越大，采样越稀疏；未采样区域可能遗漏。</p>
-        </section>
+        <p id="mode-hint" class="mode-hint">公交范围来自高德官方到达圈，按所选分钟数查询，不指定出发时刻。</p>
 
-        <section id="departure-field" class="departure-field" aria-labelledby="departure-label">
-          <label class="field-label" id="departure-label" for="departure-time">公交出发时间</label>
-          <input id="departure-time" class="departure-input" type="datetime-local" />
-          <p class="field-hint">公交路线按所选时刻查询；高德返回的总耗时包含等车时间。</p>
-        </section>
+        <button id="calculate-button" class="calculate-button" type="button" disabled>计算可达边界</button>
 
-        <button id="calculate-button" class="calculate-button" type="button" disabled>计算真实路线范围</button>
-
-        <section class="results-card" aria-live="polite" aria-label="高德路线范围结果">
+        <section class="results-card" aria-live="polite" aria-label="可达边界计算结果">
           <div class="results-heading">
             <span class="results-dot" aria-hidden="true"></span>
             <span id="result-title">等待选择出发点</span>
@@ -104,19 +91,19 @@
           <div class="stats-row">
             <div class="stat-item">
               <strong id="area-value">—</strong>
-              <span>已验证网格面积 <i>km²</i></span>
+              <span>可达区域面积 <i>km²</i></span>
             </div>
             <div class="stat-divider"></div>
             <div class="stat-item">
               <strong id="radius-value">—</strong>
-              <span>最长路线距离 <i>km</i></span>
+              <span>边界最远距离 <i>km</i></span>
             </div>
           </div>
         </section>
 
         <div class="panel-footer">
           <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M8 7v4m0-6h.01"/></svg>
-          <p>格点耗时来自高德路线规划，不用平均速度推算。网格为抽样显示，未查询区域可能遗漏；搜索地点和路线坐标会发送给高德。Web 服务 Key 随网页请求公开可见。</p>
+          <p>公交边界使用高德官方到达圈；骑行和驾车边界按 OpenStreetMap 路网计算，速度为路网模型值，不含实时路况。搜索地点会发送给高德，定位仅在你点击定位后使用。地图底图：高德；路网数据：<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap 贡献者</a> / Valhalla。</p>
         </div>
       </section>
 
@@ -125,14 +112,17 @@
       </div>
 
       <section id="legend" class="map-legend" aria-label="通勤时间图例" hidden>
-        <div class="legend-title"><span class="legend-pin" aria-hidden="true">●</span> 高德路线耗时</div>
+        <div id="legend-title" class="legend-title"><span class="legend-pin" aria-hidden="true">●</span> 可达时间</div>
         <div id="legend-items" class="legend-items"></div>
       </section>
 
       <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
     </main>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script>
+      window._AMapSecurityConfig = { securityJsCode: "795db5a6184f6a3290e787d116bc4b07" };
+    </script>
+    <script src="https://webapi.amap.com/maps?v=2.0&amp;key=ebf71458914b86f761fb304433202fa0&amp;plugin=AMap.ArrivalRange,AMap.Scale"></script>
     <script src="app.js" defer></script>
   </body>
 </html>
