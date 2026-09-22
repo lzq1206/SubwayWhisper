@@ -6,6 +6,8 @@ const AMAP_REQUEST_INTERVAL_MS = 1200;
 const VALHALLA_ISOCHRONE_URL = 'https://valhalla1.openstreetmap.de/isochrone';
 const VALHALLA_CLIENT_ID = 'https://lzq1206.github.io/SubwayWhisper/';
 const HERITAGE_SITES_URL = 'data/national-key-cultural-sites.json';
+const WORLDPOP_IMAGE_SERVICE = 'https://worldpop.arcgis.com/arcgis/rest/services/WorldPop_Population_Density_100m/ImageServer/exportImage';
+const WORLDPOP_DATA_YEAR = 2020;
 const BLUE = '#2864e8';
 const BLUE_HEX = '2864e8';
 const LAYER_OPACITIES = [0.31, 0.24, 0.18, 0.145, 0.12, 0.095, 0.075, 0.055];
@@ -41,6 +43,7 @@ let activeController = null;
 let poiHeatmapLayer = null;
 let poiHeatmapRefreshTimer = null;
 let poiHeatmapRequestId = 0;
+let worldPopLayer = null;
 let heritageSites = null;
 let heritageLoadPromise = null;
 let heritageBatchLabels = [];
@@ -73,6 +76,7 @@ const elements = {
   zoomIn: document.querySelector('#zoom-in'),
   zoomOut: document.querySelector('#zoom-out'),
   poiHeatmapToggle: document.querySelector('#poi-heatmap-toggle'),
+  worldPopToggle: document.querySelector('#worldpop-toggle'),
   heritageSitesToggle: document.querySelector('#heritage-sites-toggle'),
   hidePanelButton: document.querySelector('#hide-panel-button'),
   showPanelButton: document.querySelector('#show-panel-button'),
@@ -121,6 +125,7 @@ function initializeMap() {
   });
   map.on('moveend', scheduleHeritageRender);
   map.on('moveend', schedulePoiHeatmapRefresh);
+  map.on('zoomchange', schedulePoiHeatmapRefresh);
   map.on('zoomend', schedulePoiHeatmapRefresh);
   map.on('zoomchange', scheduleHeritageRender);
   setMapStatus('高德地图就绪 · 正在根据设备 IP 匹配所在城市');
@@ -236,10 +241,10 @@ function schedulePoiHeatmapRefresh() {
   poiHeatmapRefreshTimer = window.setTimeout(() => void setPoiHeatmapEnabled(true), 600);
 }
 
-function searchHeatmapPage(bounds, pageIndex) {
+function searchHeatmapBounds(bounds) {
   return new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => reject(new Error('高德热力图查询超时，请移动地图重试')), 12000);
-    const search = new AMap.PlaceSearch({ type: '公园', pageSize: 50, pageIndex, extensions: 'base', showCover: false });
+    const search = new AMap.PlaceSearch({ type: '公园', pageSize: 50, pageIndex: 1, extensions: 'base', showCover: false });
     search.searchInBounds('公园', bounds, (status, result) => {
       window.clearTimeout(timeout);
       if (status === 'no_data') resolve({ pois: [], count: 0 });
@@ -256,13 +261,16 @@ async function searchViewportHeatmapPoints(requestId) {
   const midLng = (sw.getLng() + ne.getLng()) / 2;
   const midLat = (sw.getLat() + ne.getLat()) / 2;
   const points = new Map();
+  let successfulCells = 0;
+  let lastError = null;
   // Split the viewport so a dense city center cannot consume the entire result limit.
   for (const [west, east] of [[sw.getLng(), midLng], [midLng, ne.getLng()]]) {
     for (const [south, north] of [[sw.getLat(), midLat], [midLat, ne.getLat()]]) {
       const cell = new AMap.Bounds([west, south], [east, north]);
-      for (let page = 1; page <= 2; page++) {
-        if (requestId !== poiHeatmapRequestId) return [];
-        const result = await searchHeatmapPage(cell, page);
+      if (requestId !== poiHeatmapRequestId) return [];
+      try {
+        const result = await searchHeatmapBounds(cell);
+        successfulCells++;
         for (const poi of result.pois || []) {
           const location = poi.location;
           const lng = Number(location?.getLng?.() ?? location?.lng);
@@ -271,10 +279,12 @@ async function searchViewportHeatmapPoints(requestId) {
             points.set(poi.id || lng + ',' + lat, { lng, lat, count: 1 });
           }
         }
-        if ((result.pois || []).length < 50 || Number(result.count) <= page * 50) break;
+      } catch (error) {
+        lastError = error;
       }
     }
   }
+  if (!successfulCells && lastError) throw lastError;
   return [...points.values()];
 }
 
@@ -296,12 +306,49 @@ async function setPoiHeatmapEnabled(enabled) {
     }
     poiHeatmapLayer.setDataSet({ data: points, max: 10 });
     poiHeatmapLayer.show();
-    showToast(points.length ? '高德热力图已更新：当前视野 ' + points.length + ' 个 POI（最多采样 400 个）' : '当前视野没有可绘制的公园 POI');
+    showToast(points.length ? '高德热力图已更新：当前视野 ' + points.length + ' 个 POI（最多采样 200 个）' : '当前视野没有可绘制的公园 POI');
   } catch (error) {
     if (requestId !== poiHeatmapRequestId) return;
     poiHeatmapLayer?.hide();
     showToast(error.message || '高德热力图加载失败，请移动地图重试', 6500);
   }
+}
+
+function worldPopTileUrl(x, y, z) {
+  const tileCount = 2 ** z;
+  const lonWest = x / tileCount * 360 - 180;
+  const lonEast = (x + 1) / tileCount * 360 - 180;
+  const latNorth = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / tileCount))) * 180 / Math.PI;
+  const latSouth = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 1) / tileCount))) * 180 / Math.PI;
+  const mercatorX = (longitude) => longitude * 20037508.342789244 / 180;
+  const mercatorY = (latitude) => Math.log(Math.tan((90 + Math.max(-85.05112878, Math.min(85.05112878, latitude))) * Math.PI / 360)) * 20037508.342789244 / Math.PI;
+  const query = new URLSearchParams({
+    bbox: [mercatorX(lonWest), mercatorY(latSouth), mercatorX(lonEast), mercatorY(latNorth)].join(','),
+    bboxSR: '3857',
+    imageSR: '3857',
+    size: '256,256',
+    format: 'png32',
+    time: String(Date.UTC(WORLDPOP_DATA_YEAR, 0, 1)),
+    noData: '0',
+    f: 'image',
+  });
+  return WORLDPOP_IMAGE_SERVICE + '?' + query.toString();
+}
+
+function setWorldPopEnabled(enabled) {
+  if (!map) return;
+  if (enabled && !worldPopLayer) {
+    worldPopLayer = new AMap.TileLayer({
+      getTileUrl: worldPopTileUrl,
+      tileSize: 256,
+      zooms: [3, 18],
+      opacity: 0.68,
+      zIndex: 16,
+    });
+    map.add(worldPopLayer);
+  }
+  if (enabled) worldPopLayer?.show();
+  else worldPopLayer?.hide();
 }
 
 async function setHeritageSitesEnabled(enabled) {
@@ -1079,6 +1126,10 @@ elements.timeRange.addEventListener('change', () => {
 
 elements.poiHeatmapToggle.addEventListener('change', () => {
   void setPoiHeatmapEnabled(elements.poiHeatmapToggle.checked);
+});
+
+elements.worldPopToggle.addEventListener('change', () => {
+  setWorldPopEnabled(elements.worldPopToggle.checked);
 });
 
 elements.heritageSitesToggle.addEventListener('change', () => {

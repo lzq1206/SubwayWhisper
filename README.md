@@ -10,7 +10,8 @@
 - **地图底图**：使用高德地图 JS API 标准底图。高德 JS API 当前没有单独的公交专用地理底图样式；地图保留默认道路、兴趣点与公交 / 地铁站点标注，通勤边界作为半透明覆盖层绘制。
 - 面积根据最外层多边形计算，仅用于概览。Valhalla 公共演示服务遵循公平使用限制，服务繁忙或限流时可以稍后重试；公开应用请求带有 `X-Client-Id` 标识。
 - **IP 初始位置**：高德 `AMap.CitySearch` 按 IP 返回城市与城市范围；初始标记采用返回范围中心，只是城市级近似点，不等同设备 GPS 定位。搜索街道或点击地图可修正出发点。
-- **高德热力图**：默认关闭；使用 `AMap.Heatmap` 绘制公园 POI 分布，不代表实时人流或拥堵。缩放或移动结束 600 毫秒后，通过 `PlaceSearch.searchInBounds` 查询当前地图视野；分四个区域，每区最多两页，共最多 400 个点位并去重，避免中心区域占满结果。大范围视野为采样展示，非完整统计。关闭后不会继续分页或显示过期查询结果。
+- **高德热力图**：默认关闭；使用 `AMap.Heatmap` 绘制公园 POI 分布，不代表实时人流或拥堵。缩放或移动结束 600 毫秒后，通过 `PlaceSearch.searchInBounds` 查询当前地图视野；分四个区域，每区最多返回 50 个点，共最多 200 个并去重；单个区域查询失败时保留其他区域结果，减少高密度视野翻页失败。大范围视野为采样展示，非完整统计。
+- **人口地图**：默认关闭；按需加载 WorldPop 100 米人口密度 ImageServer 影像图层，显示 2000–2020 年数据中的 2020 年全球估算。栅格按地图瓦片范围实时请求，和其他图层可同时显示。
 - 叠加图层有独立开关，可同时选择。
 - **全国重点文保单位**：默认关闭；开启后按 [CulturalWhisper](https://github.com/lzq1206/CulturalWhisper) 的显示规则绘制 5,066 个点位：颜色从红到蓝对应第一批至第八批，圆形、方形、菱形、三角形和六边形对应文物类别；放大至城市级且可见点位不拥挤时显示名称。数据依据 [国家文物局全国重点文物保护单位名单](https://gl.ncha.gov.cn/#/public-service)，覆盖 1961–2019 年公布批次。数据文件按需加载，坐标在前端转换为高德地图使用的 GCJ-02 坐标。
 - **菜单**：可隐藏控制面板，并通过地图左上角按钮重新打开。
@@ -23,6 +24,8 @@
 - [高德 JS API 安全密钥](https://lbs.amap.com/api/javascript-api-v2/guide/abc/jscode)
 - [高德自有数据热力图示例](https://lbs.amap.com/demo/javascript-api/example/selflayer/heatmap)
 - [高德 PlaceSearch 参考](https://lbs.amap.com/api/maps-javascript-api/reference/search/placesearch)
+- [WorldPop 100 米人口密度数据服务](https://worldpop.arcgis.com/arcgis/rest/services/WorldPop_Population_Density_100m/ImageServer)
+- [WorldPop 全球人口数据说明](https://hub.worldpop.org/)
 - [高德公交到达圈参考](https://lbs.amap.com/api/javascript-api/reference/route-search)
 - [Valhalla 等时圈 API](https://valhalla.github.io/valhalla/api/isochrone/)
 - [Valhalla 演示服务说明](https://github.com/valhalla/valhalla)
