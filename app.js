@@ -5,7 +5,7 @@ const AMAP_BASE = 'https://restapi.amap.com';
 const AMAP_REQUEST_INTERVAL_MS = 1200;
 const VALHALLA_ISOCHRONE_URL = 'https://valhalla1.openstreetmap.de/isochrone';
 const VALHALLA_CLIENT_ID = 'https://lzq1206.github.io/SubwayWhisper/';
-const NASA_CITY_LIGHTS_TILE_URL = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_CityLights_2012/default/2012-04-01/GoogleMapsCompatible_Level8/[z]/[y]/[x].jpg';
+const LIGHT_POLLUTION_WMS_URL = 'https://www.lightpollutionmap.info/tiles/wms';
 const HERITAGE_SITES_URL = 'data/national-key-cultural-sites.json';
 const BLUE = '#2864e8';
 const BLUE_HEX = '2864e8';
@@ -20,8 +20,8 @@ const HERITAGE_CATEGORY_SHAPES = {
 };
 const TRANSIT_MAX_MINUTES = 45;
 const ROAD_MAX_MINUTES = 60;
-const EXTENDED_TIME_OPTIONS = [90, 120, 180, 240];
-const LONG_CONTOUR_INTERVAL_MINUTES = 30;
+const MIN_TIME_MINUTES = 10;
+const PARK_HEATMAP_RADIUS_METERS = 5000;
 const TRANSIT_QUERY_GAP_MS = 350;
 const MODES = {
   transit: { name: '公交 / 地铁', source: '高德公交到达圈' },
@@ -41,7 +41,9 @@ let activeMode = 'transit';
 let toastTimeout = 0;
 let activeController = null;
 let lightPollutionLayer = null;
-let trafficHeatmapLayer = null;
+let poiHeatmapLayer = null;
+let poiHeatmapSearch = null;
+let poiHeatmapRequestId = 0;
 let heritageSites = null;
 let heritageLoadPromise = null;
 let heritageBatchLabels = [];
@@ -74,7 +76,7 @@ const elements = {
   zoomIn: document.querySelector('#zoom-in'),
   zoomOut: document.querySelector('#zoom-out'),
   lightPollutionToggle: document.querySelector('#light-pollution-toggle'),
-  trafficHeatmapToggle: document.querySelector('#traffic-heatmap-toggle'),
+  poiHeatmapToggle: document.querySelector('#poi-heatmap-toggle'),
   heritageSitesToggle: document.querySelector('#heritage-sites-toggle'),
   hidePanelButton: document.querySelector('#hide-panel-button'),
   showPanelButton: document.querySelector('#show-panel-button'),
@@ -161,57 +163,69 @@ function currentLimit() {
 }
 
 function updateTimeControl() {
+  const max = currentLimit();
+  const step = activeMode === 'transit' ? 5 : 10;
   const previousValue = Number(elements.timeRange.value) || 30;
-  const supportedTimes = activeMode === 'transit' ? [10, 20, 30, 40, 45] : [10, 20, 30, 40, 50, 60];
-  elements.timeRange.replaceChildren();
-  const supportedGroup = document.createElement('optgroup');
-  supportedGroup.label = activeMode === 'transit' ? '公交 / 地铁 · 最多 45 分钟' : '当前可查询 · 最多 60 分钟';
-  for (const minutes of supportedTimes) {
-    const option = document.createElement('option');
-    option.value = String(minutes);
-    option.textContent = minutes + ' 分钟';
-    supportedGroup.append(option);
-  }
-  elements.timeRange.append(supportedGroup);
-  if (activeMode !== 'transit') {
-    const extendedGroup = document.createElement('optgroup');
-    extendedGroup.label = '长时段 · 需配置支持 60 分钟以上的路网服务';
-    for (const minutes of EXTENDED_TIME_OPTIONS) {
-      const option = document.createElement('option');
-      option.value = String(minutes);
-      option.textContent = minutes + ' 分钟 · 暂不可用';
-      option.disabled = true;
-      extendedGroup.append(option);
-    }
-    elements.timeRange.append(extendedGroup);
-  }
-  elements.timeRange.value = String(supportedTimes.includes(previousValue) ? previousValue : 30);
+  const boundedValue = Math.min(max, Math.max(MIN_TIME_MINUTES, previousValue));
+  const snappedValue = MIN_TIME_MINUTES + Math.round((boundedValue - MIN_TIME_MINUTES) / step) * step;
+
+  elements.timeRange.min = String(MIN_TIME_MINUTES);
+  elements.timeRange.max = String(max);
+  elements.timeRange.step = String(step);
+  elements.timeRange.value = String(Math.min(max, snappedValue));
+
+  const ticks = activeMode === 'transit' ? [10, 20, 30, 40, 45] : [10, 20, 30, 40, 50, 60];
+  const tickContainer = document.querySelector('.range-ticks');
+  tickContainer.replaceChildren(...ticks.map((tick) => {
+    const label = document.createElement('span');
+    label.textContent = tick === max ? tick + ' 分钟' : String(tick);
+    return label;
+  }));
   elements.timeNote.textContent = activeMode === 'transit'
-    ? '高德公交到达圈目前最多支持 45 分钟。'
-    : '90、120、180、240 分钟选项因当前公共路网服务上限暂不可用；启用后每 30 分钟一圈。';
+    ? '公交 / 地铁支持 10–45 分钟（5 分钟步进）。'
+    : '骑行 / 驾车支持 10–60 分钟（10 分钟步进）。';
   updateTimeLabel();
+}
+
+function updateRangeTrack() {
+  const min = Number(elements.timeRange.min);
+  const max = Number(elements.timeRange.max);
+  const value = Number(elements.timeRange.value);
+  const percent = ((value - min) / (max - min)) * 100;
+  elements.timeRange.style.setProperty('--range-progress', percent + '%');
 }
 
 function updateTimeLabel() {
   const maxMinutes = Number(elements.timeRange.value);
   elements.timeValue.innerHTML = maxMinutes + ' <span>分钟</span>';
+  updateRangeTrack();
 }
 
 function setModeHint() {
   elements.modeHint.textContent = activeMode === 'transit'
     ? '公交范围来自高德官方到达圈，按所选分钟数查询，不指定出发时刻；当前最多 45 分钟。'
-    : '范围根据 OpenStreetMap 路网计算；通行速度来自路网模型，不含实时路况。当前公共 Valhalla 服务的等时圈上限为 60 分钟；90 分钟以上不可用时不会用估算边界替代。';
+    : '范围根据 OpenStreetMap 路网计算；通行速度来自路网模型，不含实时路况。当前公共 Valhalla 服务的等时圈上限为 60 分钟。';
 }
 
 function setLightPollutionEnabled(enabled) {
   if (!map) return;
   if (enabled && !lightPollutionLayer) {
-    lightPollutionLayer = new AMap.TileLayer({
-      tileUrl: NASA_CITY_LIGHTS_TILE_URL,
-      dataZooms: [1, 8],
-      zooms: [3, 18],
-      opacity: 0.48,
-      zIndex: 24,
+    lightPollutionLayer = new AMap.TileLayer.WMS({
+      url: LIGHT_POLLUTION_WMS_URL,
+      blend: false,
+      tileSize: 256,
+      zooms: [3, 20],
+      params: {
+        VERSION: '1.1.1',
+        LAYERS: 'PostGIS:SB_2025',
+        TILED: true,
+        STYLES: 'WA',
+        SRS: 'EPSG:3857',
+        FORMAT: 'image/png',
+        TRANSPARENT: true,
+      },
+      opacity: 0.6,
+      zIndex: 16,
     });
     map.add(lightPollutionLayer);
   }
@@ -219,19 +233,94 @@ function setLightPollutionEnabled(enabled) {
   else lightPollutionLayer?.hide();
 }
 
-function setTrafficHeatmapEnabled(enabled) {
-  if (!map) return;
-  if (enabled && !trafficHeatmapLayer) {
-    trafficHeatmapLayer = new AMap.TileLayer.Traffic({
-      autoRefresh: true,
-      interval: 180,
-      opacity: 0.58,
-      zIndex: 28,
+function loadAmapPlugins(plugins) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeoutId = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error('高德地图插件加载超时，请稍后重试'));
+    }, 12000);
+
+    try {
+      map.plugin(plugins, () => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeoutId);
+        resolve();
+      });
+    } catch (error) {
+      window.clearTimeout(timeoutId);
+      reject(error);
+    }
+  });
+}
+
+function searchNearbyParkHeatmapPoints() {
+  return new Promise((resolve, reject) => {
+    if (!poiHeatmapSearch) {
+      poiHeatmapSearch = new AMap.PlaceSearch({
+        type: '公园',
+        pageSize: 50,
+        pageIndex: 1,
+        extensions: 'base',
+        showCover: false,
+      });
+    }
+
+    poiHeatmapSearch.searchNearBy('公园', map.getCenter(), PARK_HEATMAP_RADIUS_METERS, (status, result) => {
+      if (status !== 'complete') {
+        reject(new Error(result?.info || '高德周边公园搜索失败'));
+        return;
+      }
+
+      const points = (result?.poiList?.pois || []).map((poi) => {
+        const location = poi.location;
+        const lng = typeof location?.getLng === 'function' ? location.getLng() : Number(location?.lng ?? poi.lng);
+        const lat = typeof location?.getLat === 'function' ? location.getLat() : Number(location?.lat ?? poi.lat);
+        return { lng, lat, count: 1 };
+      }).filter((point) => Number.isFinite(point.lng) && Number.isFinite(point.lat));
+
+      if (!points.length) {
+        reject(new Error('地图中心 5 公里内没有可绘制的公园点位'));
+        return;
+      }
+      resolve(points);
     });
-    map.add(trafficHeatmapLayer);
+  });
+}
+
+async function setPoiHeatmapEnabled(enabled) {
+  if (!map) return;
+  const requestId = ++poiHeatmapRequestId;
+  if (!enabled) {
+    poiHeatmapLayer?.hide();
+    return;
   }
-  if (enabled) trafficHeatmapLayer?.show();
-  else trafficHeatmapLayer?.hide();
+
+  try {
+    await loadAmapPlugins(['AMap.Heatmap', 'AMap.PlaceSearch']);
+    if (requestId !== poiHeatmapRequestId || !elements.poiHeatmapToggle.checked) return;
+    const points = await searchNearbyParkHeatmapPoints();
+    if (requestId !== poiHeatmapRequestId || !elements.poiHeatmapToggle.checked) return;
+
+    if (!poiHeatmapLayer) {
+      poiHeatmapLayer = new AMap.Heatmap(map, {
+        radius: 25,
+        opacity: [0, 0.8],
+        zooms: [3, 20],
+        zIndex: 28,
+      });
+    }
+    poiHeatmapLayer.setDataSet({ data: points, max: 10 });
+    poiHeatmapLayer.show();
+    showToast('高德公园热力图已加载：' + points.length + ' 个点位（地图中心周边 5 公里）');
+  } catch (error) {
+    if (requestId !== poiHeatmapRequestId) return;
+    elements.poiHeatmapToggle.checked = false;
+    poiHeatmapLayer?.hide();
+    showToast(error.message || '高德公园热力图加载失败，请稍后重试', 6500);
+  }
 }
 
 async function setHeritageSitesEnabled(enabled) {
@@ -558,21 +647,21 @@ function placeOrigin(point, name = '') {
 
 function getContourTimes(maxMinutes) {
   const times = [];
-  const interval = maxMinutes > ROAD_MAX_MINUTES ? LONG_CONTOUR_INTERVAL_MINUTES : 10;
+  const interval = 10;
   for (let minutes = interval; minutes < maxMinutes; minutes += interval) times.push(minutes);
   if (!times.includes(maxMinutes)) times.push(maxMinutes);
   return times;
 }
 
 function opacityForTime(minutes, maxMinutes) {
-  const interval = maxMinutes > ROAD_MAX_MINUTES ? LONG_CONTOUR_INTERVAL_MINUTES : 10;
+  const interval = 10;
   const tier = Math.max(1, Math.ceil(minutes / interval));
   return LAYER_OPACITIES[Math.min(tier - 1, LAYER_OPACITIES.length - 1)];
 }
 
 function addLegend(maxMinutes) {
   const thresholds = getContourTimes(maxMinutes);
-  const interval = maxMinutes > ROAD_MAX_MINUTES ? LONG_CONTOUR_INTERVAL_MINUTES : 10;
+  const interval = 10;
   elements.legendItems.replaceChildren();
   for (let index = 0; index < thresholds.length; index += 1) {
     const item = document.createElement('div');
@@ -1000,8 +1089,9 @@ elements.modeButtons.forEach((button) => {
   });
 });
 
+elements.timeRange.addEventListener('input', updateTimeLabel);
+
 elements.timeRange.addEventListener('change', () => {
-  updateTimeLabel();
   clearResults('通勤时间已更改 · 点击按钮重新计算边界');
 });
 
@@ -1009,8 +1099,8 @@ elements.lightPollutionToggle.addEventListener('change', () => {
   setLightPollutionEnabled(elements.lightPollutionToggle.checked);
 });
 
-elements.trafficHeatmapToggle.addEventListener('change', () => {
-  setTrafficHeatmapEnabled(elements.trafficHeatmapToggle.checked);
+elements.poiHeatmapToggle.addEventListener('change', () => {
+  void setPoiHeatmapEnabled(elements.poiHeatmapToggle.checked);
 });
 
 elements.heritageSitesToggle.addEventListener('change', () => {

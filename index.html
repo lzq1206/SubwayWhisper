@@ -76,21 +76,22 @@
             <label class="field-label" id="time-heading" for="time-range">最长通勤时间</label>
             <output id="time-value" class="time-value" for="time-range">30 <span>分钟</span></output>
           </div>
-          <select id="time-range" class="time-select" aria-label="最长通勤时间（分钟）"></select>
-          <p id="time-note" class="time-options-note">长时段边界计划按每 30 分钟一圈显示。</p>
+          <input id="time-range" class="time-range" type="range" min="10" max="45" step="5" value="30" aria-label="最长通勤时间（分钟）" />
+          <div class="range-ticks" aria-hidden="true"><span>10</span><span>20</span><span>30</span><span>40</span><span>45 分钟</span></div>
+          <p id="time-note" class="time-options-note">公交 / 地铁支持 10–45 分钟。</p>
         </section>
 
         <p id="mode-hint" class="mode-hint">公交范围来自高德官方到达圈，按所选分钟数查询，不指定出发时刻。</p>
 
         <section class="overlay-section" aria-labelledby="overlay-heading">
-          <h2 id="overlay-heading" class="field-label">地图叠加</h2>
+          <h2 id="overlay-heading" class="field-label">地图叠加（可同时多选）</h2>
           <label class="overlay-option" for="light-pollution-toggle">
-            <span class="overlay-copy"><strong>光污染参考图</strong><small>NASA 2012 夜间灯光，半透明叠加</small></span>
+            <span class="overlay-copy"><strong>天空亮度 2025</strong><small>Light Pollution Map 模型图层，半透明</small></span>
             <span class="switch"><input id="light-pollution-toggle" type="checkbox" /><span aria-hidden="true"></span></span>
           </label>
-          <label class="overlay-option" for="traffic-heatmap-toggle">
-            <span class="overlay-copy"><strong>交通热力图</strong><small>高德实时路况颜色，半透明叠加</small></span>
-            <span class="switch"><input id="traffic-heatmap-toggle" type="checkbox" /><span aria-hidden="true"></span></span>
+          <label class="overlay-option" for="poi-heatmap-toggle">
+            <span class="overlay-copy"><strong>高德公园热力图</strong><small>Heatmap 图层 · 地图中心周边 5 公里公园 POI</small></span>
+            <span class="switch"><input id="poi-heatmap-toggle" type="checkbox" /><span aria-hidden="true"></span></span>
           </label>
           <label class="overlay-option" for="heritage-sites-toggle">
             <span class="overlay-copy"><strong>全国重点文保单位</strong><small>5,066 处 · 批次颜色、类别图形，放大后显示名称</small></span>
@@ -120,7 +121,7 @@
 
         <div class="panel-footer">
           <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M8 7v4m0-6h.01"/></svg>
-          <p>IP 默认点为高德返回的城市范围中心，仅供起点参考，点击地图可调整。公交边界使用高德官方到达圈；骑行和驾车边界按 OpenStreetMap 路网计算，不含实时路况。交通图层为高德实时路况；光污染参考图为 <a href="https://earthdata.nasa.gov/data/instruments/viirs" target="_blank" rel="noreferrer">NASA VIIRS 2012 夜间灯光</a>，不代表实时天空亮度。文保图层数据来自 <a href="https://github.com/lzq1206/CulturalWhisper" target="_blank" rel="noreferrer">CulturalWhisper</a>，据 <a href="https://gl.ncha.gov.cn/#/public-service" target="_blank" rel="noreferrer">国家文物局全国重点文物保护单位名单</a>整理，数据批次覆盖 1961–2019 年。路网数据：<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap 贡献者</a> / Valhalla。</p>
+          <p>IP 默认点为高德返回的城市范围中心，仅供起点参考，点击地图可调整。公交边界使用高德官方到达圈；骑行和驾车边界按 OpenStreetMap 路网计算，不含实时路况。公园热力图基于高德周边公园 POI。天空亮度图层采用 <a href="https://www.lightpollutionmap.info/" target="_blank" rel="noreferrer">Light Pollution Map Sky Brightness 2025</a>，其模型基于 <a href="https://viirsland.gsfc.nasa.gov/Products/NASA/BlackMarble.html" target="_blank" rel="noreferrer">NASA Black Marble 2.0</a>；数据是模型参考值，不是实时测量。文保图层数据来自 <a href="https://github.com/lzq1206/CulturalWhisper" target="_blank" rel="noreferrer">CulturalWhisper</a>，据 <a href="https://gl.ncha.gov.cn/#/public-service" target="_blank" rel="noreferrer">国家文物局全国重点文物保护单位名单</a>整理，数据批次覆盖 1961–2019 年。路网数据：<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap 贡献者</a> / Valhalla。</p>
         </div>
       </section>
 
