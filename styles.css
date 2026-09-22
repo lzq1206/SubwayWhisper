@@ -101,8 +101,8 @@ h1 { margin: 0; color: var(--ink); font-size: 21px; line-height: 1.35; letter-sp
 .mode-hint { margin: 12px 0 0; padding: 9px 10px; border: 1px solid #e6eefb; border-radius: 10px; color: #73829b; background: #f7f9fd; font-size: 10px; line-height: 1.55; }
 .worldpop-legend { margin: 2px 4px 8px; color: #8895a8; font-size: 8px; }
 .worldpop-legend[hidden] { display: none; }
-.worldpop-legend-gradient { height: 8px; border-radius: 99px; background: linear-gradient(90deg, #fff7bc, #fee391, #fec44f, #fe9929, #ec7014, #cc4c02, #8c2d04); }
-.worldpop-legend-values { display: flex; justify-content: space-between; margin-top: 3px; color: #78869b; font-variant-numeric: tabular-nums; }
+.worldpop-legend-gradient { height: 8px; border: 1px solid rgba(77, 111, 154, .12); border-radius: 99px; background: linear-gradient(90deg, #d9ecff 0 9.09%, #bedfff 9.09% 18.18%, #a8e2f0 18.18% 27.27%, #a7e4d0 27.27% 36.36%, #bee6b6 36.36% 45.45%, #dfe99f 45.45% 54.54%, #f4e89b 54.54% 63.63%, #f9ce9f 63.63% 72.72%, #f5b0a0 72.72% 81.81%, #ed9298 81.81% 90.9%, #e56f7b 90.9% 100%); }
+.worldpop-legend-values { display: grid; grid-template-columns: repeat(11, minmax(0, 1fr)); margin-top: 3px; color: #78869b; font-variant-numeric: tabular-nums; text-align: center; }
 .worldpop-legend > small { display: block; margin-top: 3px; text-align: right; }
 .heritage-site-marker { display: inline-flex; align-items: center; gap: 6px; width: max-content; height: 22px; white-space: nowrap; cursor: pointer; }
 .heritage-site-marker__dot { width: 7px; height: 7px; flex: 0 0 auto; border: 0; background: var(--marker-color, #77d9b7); }
@@ -163,7 +163,7 @@ h1 { margin: 0; color: var(--ink); font-size: 21px; line-height: 1.35; letter-sp
   .overlay-picker .field-label { display: none; }
   .overlay-picker select { height: 36px; }
   .worldpop-legend { margin: 7px 4px 0; }
-  .worldpop-legend-values { font-size: 7px; }
+  .worldpop-legend-values { font-size: 7px; letter-spacing: -.03em; }
   .bottom-control-dock { right: 66px; bottom: calc(10px + env(safe-area-inset-bottom)); left: 12px; width: auto; padding: 9px 10px; border-radius: 16px; }
   .bottom-control-dock .mode-fieldset legend { margin-bottom: 4px; font-size: 10px; }
   .bottom-control-dock .mode-options { gap: 6px; }

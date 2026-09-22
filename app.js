@@ -13,19 +13,23 @@ const WORLDPOP_RENDERING_RULE = {
   rasterFunctionArguments: {
     Colormap: [
       [0, 0, 0, 0],
-      [1, 255, 247, 188],
-      [2, 254, 227, 145],
-      [3, 254, 196, 79],
-      [4, 254, 153, 41],
-      [5, 236, 112, 20],
-      [6, 204, 76, 2],
-      [7, 140, 45, 4],
+      [1, 217, 236, 255],
+      [2, 190, 223, 255],
+      [3, 168, 226, 240],
+      [4, 167, 228, 208],
+      [5, 190, 230, 182],
+      [6, 223, 233, 159],
+      [7, 244, 232, 155],
+      [8, 249, 206, 159],
+      [9, 245, 176, 160],
+      [10, 237, 146, 152],
+      [11, 229, 111, 123],
     ],
     Raster: {
       rasterFunction: 'Remap',
       rasterFunctionArguments: {
-        InputRanges: [0, 1, 1, 10, 10, 50, 50, 150, 150, 500, 500, 2000, 2000, 10000, 10000, 10000000],
-        OutputValues: [0, 1, 2, 3, 4, 5, 6, 7],
+        InputRanges: [0, 1, 1, 10, 10, 50, 50, 150, 150, 500, 500, 2000, 2000, 10000, 10000, 20000, 20000, 30000, 30000, 40000, 40000, 50000, 50000, 10000000],
+        OutputValues: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
         Raster: '$$',
       },
       outputPixelType: 'U8',
@@ -369,7 +373,7 @@ function setWorldPopEnabled(enabled) {
       getTileUrl: worldPopTileUrl,
       tileSize: 256,
       zooms: [3, 18],
-      opacity: 0.68,
+      opacity: 0.48,
       zIndex: 16,
     });
     map.add(worldPopLayer);
