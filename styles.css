@@ -110,6 +110,18 @@ h1 { margin: 0; color: var(--ink); font-size: 21px; line-height: 1.35; letter-sp
 .overlay-copy { display: grid; gap: 3px; }
 .overlay-copy strong { color: #40516c; font-size: 10px; font-weight: 700; }
 .overlay-copy small { color: #95a1b2; font-size: 9px; }
+.heritage-site-marker { display: inline-flex; align-items: center; gap: 6px; width: max-content; height: 22px; white-space: nowrap; cursor: pointer; }
+.heritage-site-marker__dot { width: 7px; height: 7px; flex: 0 0 auto; border: 0; background: var(--marker-color, #77d9b7); }
+.heritage-site-marker__dot--circle { border-radius: 50%; }
+.heritage-site-marker__dot--square { border-radius: 2px; }
+.heritage-site-marker__dot--diamond { border-radius: 2px; transform: rotate(45deg); }
+.heritage-site-marker__dot--triangle { border-radius: 0; clip-path: polygon(50% 0%, 0% 100%, 100% 100%); }
+.heritage-site-marker__dot--hexagon { border-radius: 0; clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%); }
+.heritage-site-marker__name { max-width: 130px; overflow: hidden; padding: 2px 8px; border: 1px solid rgba(255,255,255,.1); border-radius: 999px; color: #ecf8ff; background: rgba(4,10,20,.72); font-size: 12px; font-weight: 700; text-overflow: ellipsis; text-shadow: 0 1px 2px rgba(0,0,0,.35); }
+.heritage-info-card { min-width: 210px; max-width: 290px; padding: 3px 2px; color: #34445d; font-family: inherit; }
+.heritage-info-card strong { display: block; margin-bottom: 8px; color: #15233b; font-size: 14px; }
+.heritage-info-card p { margin: 4px 0; color: #64738a; font-size: 11px; line-height: 1.45; }
+.heritage-info-card b { color: #40516c; font-weight: 700; }
 .switch { position: relative; display: block; flex: none; width: 34px; height: 20px; }
 .switch input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .switch > span { position: absolute; inset: 0; border-radius: 99px; background: #dbe2ec; transition: background .16s; }

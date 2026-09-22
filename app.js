@@ -6,9 +6,18 @@ const AMAP_REQUEST_INTERVAL_MS = 1200;
 const VALHALLA_ISOCHRONE_URL = 'https://valhalla1.openstreetmap.de/isochrone';
 const VALHALLA_CLIENT_ID = 'https://lzq1206.github.io/SubwayWhisper/';
 const NASA_CITY_LIGHTS_TILE_URL = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_CityLights_2012/default/2012-04-01/GoogleMapsCompatible_Level8/[z]/[y]/[x].jpg';
+const HERITAGE_SITES_URL = 'data/national-key-cultural-sites.json';
 const BLUE = '#2864e8';
 const BLUE_HEX = '2864e8';
 const LAYER_OPACITIES = [0.31, 0.24, 0.18, 0.145, 0.12, 0.095, 0.075, 0.055];
+const HERITAGE_CATEGORY_SHAPES = {
+  '古遗址': 'circle',
+  '古建筑': 'square',
+  '古墓葬': 'diamond',
+  '石窟寺及石刻': 'triangle',
+  '近现代重要史迹及代表性建筑': 'hexagon',
+  '其他': 'circle',
+};
 const TRANSIT_MAX_MINUTES = 45;
 const ROAD_MAX_MINUTES = 60;
 const EXTENDED_TIME_OPTIONS = [90, 120, 180, 240];
@@ -33,6 +42,15 @@ let toastTimeout = 0;
 let activeController = null;
 let lightPollutionLayer = null;
 let trafficHeatmapLayer = null;
+let heritageSites = null;
+let heritageLoadPromise = null;
+let heritageBatchLabels = [];
+let heritageCategories = [];
+let heritageMassMarks = null;
+let heritageLabelMarkers = [];
+let heritageInfoWindow = null;
+let heritageSitesEnabled = false;
+let heritageRenderFrame = 0;
 
 const elements = {
   searchForm: document.querySelector('#search-form'),
@@ -57,6 +75,7 @@ const elements = {
   zoomOut: document.querySelector('#zoom-out'),
   lightPollutionToggle: document.querySelector('#light-pollution-toggle'),
   trafficHeatmapToggle: document.querySelector('#traffic-heatmap-toggle'),
+  heritageSitesToggle: document.querySelector('#heritage-sites-toggle'),
   hidePanelButton: document.querySelector('#hide-panel-button'),
   showPanelButton: document.querySelector('#show-panel-button'),
   controlPanel: document.querySelector('#control-panel'),
@@ -102,6 +121,8 @@ function initializeMap() {
     elements.searchInput.value = lat.toFixed(4) + ', ' + lng.toFixed(4);
     showToast('出发点已更新');
   });
+  map.on('moveend', scheduleHeritageRender);
+  map.on('zoomchange', scheduleHeritageRender);
   setMapStatus('高德地图就绪 · 正在根据设备 IP 匹配所在城市');
   initializeIpCityOrigin();
 }
@@ -211,6 +232,223 @@ function setTrafficHeatmapEnabled(enabled) {
   }
   if (enabled) trafficHeatmapLayer?.show();
   else trafficHeatmapLayer?.hide();
+}
+
+async function setHeritageSitesEnabled(enabled) {
+  heritageSitesEnabled = enabled;
+  if (!enabled) {
+    heritageMassMarks?.setMap(null);
+    removeHeritageLabelMarkers();
+    heritageInfoWindow?.close();
+    return;
+  }
+  if (!map) return;
+
+  setMapStatus('正在加载全国重点文保单位数据…');
+  try {
+    heritageSites = await loadHeritageSites();
+    if (!heritageSitesEnabled || !elements.heritageSitesToggle.checked) return;
+    renderHeritageSites();
+    setMapStatus('文保单位图层已开启 · ' + heritageSites.length.toLocaleString('zh-CN') + ' 处');
+  } catch (error) {
+    elements.heritageSitesToggle.checked = false;
+    heritageSitesEnabled = false;
+    setMapStatus('文保数据加载失败');
+    showToast(error.message || '文保单位数据加载失败，请稍后重试', 6500);
+  }
+}
+
+function loadHeritageSites() {
+  if (!heritageLoadPromise) {
+    const dataUrl = new URL(HERITAGE_SITES_URL, document.baseURI);
+    heritageLoadPromise = fetch(dataUrl, { cache: 'force-cache' })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('文保单位数据文件暂时无法访问');
+        const data = await response.json();
+        if (data.schema !== 1 || !Array.isArray(data.records) || !Array.isArray(data.batches) || !Array.isArray(data.categories)) {
+          throw new Error('文保单位数据格式无效');
+        }
+        heritageBatchLabels = data.batches;
+        heritageCategories = data.categories;
+        const sites = data.records.map((record) => {
+          const [wgsLng, wgsLat, name, batchIndex, categoryIndex, period, address, code] = record;
+          const [lng, lat] = wgs84ToGcj02(Number(wgsLng), Number(wgsLat));
+          if (![lng, lat, batchIndex, categoryIndex].every(Number.isFinite)) return null;
+          const batch = heritageBatchLabels[batchIndex];
+          const category = heritageCategories[categoryIndex];
+          return {
+            position: [lng, lat],
+            name: String(name || ''),
+            batch: String(batch || '未标注'),
+            batchIndex: Number(batchIndex),
+            category: String(category || '其他'),
+            categoryIndex: Number(categoryIndex),
+            period: String(period || ''),
+            address: String(address || ''),
+            code: String(code || ''),
+            color: heritageBatchColor(Number(batchIndex), heritageBatchLabels.length),
+            styleIndex: Number(batchIndex) * heritageCategories.length + Number(categoryIndex),
+          };
+        }).filter(Boolean);
+        if (!sites.length) throw new Error('文保单位数据中没有可显示的点位');
+        return sites;
+      })
+      .catch((error) => {
+        heritageLoadPromise = null;
+        throw error;
+      });
+  }
+  return heritageLoadPromise;
+}
+
+function heritageBatchColor(index, count) {
+  const first = [255, 77, 79];
+  const last = [59, 130, 246];
+  const ratio = count > 1 ? Math.min(1, Math.max(0, index / (count - 1))) : 0.45;
+  return '#' + first.map((start, channel) => Math.round(start + (last[channel] - start) * ratio).toString(16).padStart(2, '0')).join('');
+}
+
+function heritageShapeForCategory(category) {
+  return HERITAGE_CATEGORY_SHAPES[category] || 'circle';
+}
+
+function heritageSvgDataUrl(color, shape, size) {
+  const mid = size / 2;
+  let mark;
+  if (shape === 'square') {
+    mark = `<rect x="0" y="0" width="${size}" height="${size}" fill="${color}"/>`;
+  } else if (shape === 'diamond') {
+    mark = `<polygon points="${mid},0 ${size},${mid} ${mid},${size} 0,${mid}" fill="${color}"/>`;
+  } else if (shape === 'triangle') {
+    mark = `<polygon points="${mid},0 ${size},${size} 0,${size}" fill="${color}"/>`;
+  } else if (shape === 'hexagon') {
+    mark = `<polygon points="${size * .25},0 ${size * .75},0 ${size},${mid} ${size * .75},${size} ${size * .25},${size} 0,${mid}" fill="${color}"/>`;
+  } else {
+    mark = `<circle cx="${mid}" cy="${mid}" r="${mid}" fill="${color}"/>`;
+  }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${mark}</svg>`;
+  return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+}
+
+function heritageMassStyles(zoom) {
+  const large = zoom >= 8;
+  const styles = [];
+  for (let batchIndex = 0; batchIndex < heritageBatchLabels.length; batchIndex += 1) {
+    const color = heritageBatchColor(batchIndex, heritageBatchLabels.length);
+    for (const category of heritageCategories) {
+      const shape = heritageShapeForCategory(category);
+      const size = shape === 'circle' ? (large ? 7 : 5) : (large ? 10 : 6);
+      styles.push({
+        url: heritageSvgDataUrl(color, shape, size),
+        size: new AMap.Size(size, size),
+        anchor: new AMap.Pixel(size / 2, size / 2),
+      });
+    }
+  }
+  return styles;
+}
+
+function visibleHeritageSites() {
+  const bounds = map?.getBounds();
+  if (!bounds) return [];
+  return heritageSites.filter((site) => bounds.contains(new AMap.LngLat(site.position[0], site.position[1])));
+}
+
+function removeHeritageLabelMarkers() {
+  if (map && heritageLabelMarkers.length) map.remove(heritageLabelMarkers);
+  heritageLabelMarkers = [];
+}
+
+function createHeritageLabelMarker(site) {
+  const shape = heritageShapeForCategory(site.category);
+  const content = '<div class="heritage-site-marker" style="--marker-color:' + site.color + '">' +
+    '<span class="heritage-site-marker__dot heritage-site-marker__dot--' + shape + '"></span>' +
+    '<span class="heritage-site-marker__name">' + escapeHeritageText(site.name) + '</span></div>';
+  const marker = new AMap.Marker({
+    position: site.position,
+    title: site.name,
+    content,
+    offset: new AMap.Pixel(-10, -10),
+    zIndex: 120,
+  });
+  marker.on('click', () => openHeritageDetails(site));
+  return marker;
+}
+
+function renderHeritageSites() {
+  if (!heritageSitesEnabled || !map || !heritageSites) return;
+  const inView = visibleHeritageSites();
+  const useLabels = map.getZoom() >= 10 && inView.length <= 500;
+  removeHeritageLabelMarkers();
+
+  if (useLabels) {
+    heritageMassMarks?.setMap(null);
+    heritageLabelMarkers = inView.map(createHeritageLabelMarker);
+    if (heritageLabelMarkers.length) map.add(heritageLabelMarkers);
+    return;
+  }
+
+  if (typeof AMap.MassMarks !== 'function') {
+    showToast('高德海量点图层未加载，无法显示文保单位', 6500);
+    return;
+  }
+  if (!heritageMassMarks) {
+    const data = heritageSites.map((site) => ({
+      lnglat: site.position,
+      style: site.styleIndex,
+      name: site.name,
+      heritageSite: site,
+    }));
+    heritageMassMarks = new AMap.MassMarks(data, {
+      opacity: 0.95,
+      zIndex: 110,
+      zooms: [3, 19],
+      cursor: 'pointer',
+      style: heritageMassStyles(map.getZoom()),
+    });
+    heritageMassMarks.on('click', (event) => {
+      const site = event.data?.heritageSite;
+      if (site) openHeritageDetails(site, event.data?.lnglat || site.position);
+    });
+  } else {
+    heritageMassMarks.setStyle(heritageMassStyles(map.getZoom()));
+  }
+  heritageMassMarks.setMap(map);
+}
+
+function scheduleHeritageRender() {
+  if (!heritageSitesEnabled || !heritageSites || heritageRenderFrame) return;
+  heritageRenderFrame = window.requestAnimationFrame(() => {
+    heritageRenderFrame = 0;
+    renderHeritageSites();
+  });
+}
+
+function escapeHeritageText(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function openHeritageDetails(site, position = site.position) {
+  if (!map || !site) return;
+  const rows = [
+    ['批次', site.batch],
+    ['类别', site.category],
+    ['年代', site.period],
+    ['地址', site.address],
+    ['编号', site.code],
+  ].filter(([, value]) => value);
+  const content = '<div class="heritage-info-card"><strong>' + escapeHeritageText(site.name) + '</strong>' +
+    rows.map(([label, value]) => '<p><b>' + label + '：</b>' + escapeHeritageText(value) + '</p>').join('') + '</div>';
+  if (!heritageInfoWindow) {
+    heritageInfoWindow = new AMap.InfoWindow({ isCustom: true, autoMove: true, offset: new AMap.Pixel(0, -10) });
+  }
+  heritageInfoWindow.setContent(content);
+  heritageInfoWindow.open(map, position);
 }
 
 function setControlPanelHidden(hidden) {
@@ -773,6 +1011,10 @@ elements.lightPollutionToggle.addEventListener('change', () => {
 
 elements.trafficHeatmapToggle.addEventListener('change', () => {
   setTrafficHeatmapEnabled(elements.trafficHeatmapToggle.checked);
+});
+
+elements.heritageSitesToggle.addEventListener('change', () => {
+  void setHeritageSitesEnabled(elements.heritageSitesToggle.checked);
 });
 
 elements.hidePanelButton.addEventListener('click', () => setControlPanelHidden(true));

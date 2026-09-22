@@ -92,6 +92,10 @@
             <span class="overlay-copy"><strong>交通热力图</strong><small>高德实时路况颜色，半透明叠加</small></span>
             <span class="switch"><input id="traffic-heatmap-toggle" type="checkbox" /><span aria-hidden="true"></span></span>
           </label>
+          <label class="overlay-option" for="heritage-sites-toggle">
+            <span class="overlay-copy"><strong>全国重点文保单位</strong><small>5,066 处 · 批次颜色、类别图形，放大后显示名称</small></span>
+            <span class="switch"><input id="heritage-sites-toggle" type="checkbox" /><span aria-hidden="true"></span></span>
+          </label>
         </section>
 
         <button id="calculate-button" class="calculate-button" type="button" disabled>计算可达边界</button>
@@ -116,7 +120,7 @@
 
         <div class="panel-footer">
           <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M8 7v4m0-6h.01"/></svg>
-          <p>IP 默认点为高德返回的城市范围中心，仅供起点参考，点击地图可调整。公交边界使用高德官方到达圈；骑行和驾车边界按 OpenStreetMap 路网计算，不含实时路况。交通图层为高德实时路况；光污染参考图为 <a href="https://earthdata.nasa.gov/data/instruments/viirs" target="_blank" rel="noreferrer">NASA VIIRS 2012 夜间灯光</a>，不代表实时天空亮度。路网数据：<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap 贡献者</a> / Valhalla。</p>
+          <p>IP 默认点为高德返回的城市范围中心，仅供起点参考，点击地图可调整。公交边界使用高德官方到达圈；骑行和驾车边界按 OpenStreetMap 路网计算，不含实时路况。交通图层为高德实时路况；光污染参考图为 <a href="https://earthdata.nasa.gov/data/instruments/viirs" target="_blank" rel="noreferrer">NASA VIIRS 2012 夜间灯光</a>，不代表实时天空亮度。文保图层数据来自 <a href="https://github.com/lzq1206/CulturalWhisper" target="_blank" rel="noreferrer">CulturalWhisper</a>，据 <a href="https://gl.ncha.gov.cn/#/public-service" target="_blank" rel="noreferrer">国家文物局全国重点文物保护单位名单</a>整理，数据批次覆盖 1961–2019 年。路网数据：<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap 贡献者</a> / Valhalla。</p>
         </div>
       </section>
 
