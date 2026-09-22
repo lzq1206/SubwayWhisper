@@ -86,7 +86,6 @@ const elements = {
   timeNote: document.querySelector('#time-note'),
   calculateButton: document.querySelector('#calculate-button'),
   modeButtons: [...document.querySelectorAll('.mode-card')],
-  modeCurrent: document.querySelector('#mode-current'),
   resultTitle: document.querySelector('#result-title'),
   areaValue: document.querySelector('#area-value'),
   radiusValue: document.querySelector('#radius-value'),
@@ -100,9 +99,8 @@ const elements = {
   overlaySelect: document.querySelector('#map-overlay'),
   worldPopLegend: document.querySelector('#worldpop-legend'),
   topBrand: document.querySelector('#top-brand'),
-  overlayPicker: document.querySelector('#map-overlay-picker'),
   bottomControlDock: document.querySelector('#bottom-control-dock'),
-  modePicker: document.querySelector('#mode-picker'),
+  dockToggle: document.querySelector('#dock-toggle'),
   moreContent: document.querySelector('#more-content'),
 };
 
@@ -143,7 +141,6 @@ function initializeMap() {
     const point = [Number(event.lnglat.getLng()), Number(event.lnglat.getLat())];
     const [lng, lat] = gcj02ToWgs84(point[0], point[1]);
     placeOrigin({ lat, lng });
-    showToast('出发点已更新');
   });
   map.on('moveend', scheduleHeritageRender);
   map.on('moveend', schedulePoiHeatmapRefresh);
@@ -175,7 +172,7 @@ function initializeIpCityOrigin() {
       const approximateName = cityName + ' · IP 城市范围中心（近似）';
       placeOrigin({ lat, lng }, approximateName);
       map.setZoomAndCenter(12, center);
-      setMapStatus('IP 城市定位 · ' + cityName + ' · 起点为城市级近似位置');
+      setMapStatus('');
     });
   };
   if (AMap.CitySearch) searchForIpCity();
@@ -374,6 +371,7 @@ function setSelectedOverlay(value) {
   void setPoiHeatmapEnabled(value === 'heatmap');
   setWorldPopEnabled(value === 'population');
   void setHeritageSitesEnabled(value === 'heritage');
+  fitReachToMap();
 }
 
 async function setHeritageSitesEnabled(enabled) {
@@ -629,7 +627,7 @@ function placeOrigin(point, name = '') {
   });
   map.add(originMarker);
   elements.calculateButton.disabled = false;
-  clearResults('出发点已设置 · 点击地图可更换');
+  clearResults('');
 }
 
 function getContourTimes(maxMinutes) {
@@ -861,10 +859,7 @@ function polygonMetrics(shapes, maxMinutes, originCoordinate) {
 function fitReachToMap() {
   if (!map || !reachOverlays.length) return;
   const isMobile = window.innerWidth <= 790;
-  const topHeight = Math.max(
-    elements.topBrand.getBoundingClientRect().height,
-    elements.overlayPicker.getBoundingClientRect().height,
-  );
+  const topHeight = elements.topBrand.getBoundingClientRect().height;
   const dockHeight = elements.bottomControlDock.getBoundingClientRect().height;
   const avoid = isMobile
     ? [topHeight + 18, 56, dockHeight + 18, 12]
@@ -991,7 +986,6 @@ function gcj02ToWgs84(lng, lat) {
 elements.modeButtons.forEach((button) => {
   button.addEventListener('click', () => {
     activeMode = button.dataset.mode;
-    elements.modeCurrent.textContent = MODES[activeMode].name;
     elements.modeButtons.forEach((item) => {
       const selected = item === button;
       item.classList.toggle('is-active', selected);
@@ -1010,7 +1004,15 @@ elements.timeRange.addEventListener('change', () => {
 
 
 elements.overlaySelect.addEventListener('change', () => setSelectedOverlay(elements.overlaySelect.value));
-elements.modePicker.addEventListener('toggle', fitReachToMap);
+elements.dockToggle.addEventListener('click', () => {
+  const collapsed = elements.bottomControlDock.classList.toggle('is-collapsed');
+  const label = collapsed ? '展开底部控制面板' : '收起底部控制面板';
+  elements.dockToggle.setAttribute('aria-expanded', String(!collapsed));
+  elements.dockToggle.setAttribute('aria-label', label);
+  elements.dockToggle.title = label;
+  elements.dockToggle.querySelector('.visually-hidden').textContent = label;
+  fitReachToMap();
+});
 elements.moreContent.addEventListener('toggle', fitReachToMap);
 
 elements.calculateButton.addEventListener('click', calculateReach);
