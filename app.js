@@ -2,6 +2,7 @@
 
 const API_BASE = window.SUBWAY_API_BASE || (
   window.location.hostname.endsWith('.pages.dev')
+    || window.location.hostname.endsWith('.workers.dev')
     ? window.location.origin + '/api'
     : 'https://subwaywhisper.pages.dev/api'
 );

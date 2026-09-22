@@ -1,6 +1,6 @@
 # SubwayWhisper · 城市通勤圈
 
-一个中文地图网页，搜索或点选出发地，再选择公交 / 地铁、骑行或驾车，以及 10–60 分钟的时间上限。页面通过 Cloudflare Pages Functions 调用高德 Web 服务路线规划接口，按每个网格中心返回的路线耗时着色。
+一个中文地图网页，搜索或点选出发地，再选择公交 / 地铁、骑行或驾车，以及 10–60 分钟的时间上限。页面通过 Cloudflare Worker 调用高德 Web 服务路线规划接口，按每个网格中心返回的路线耗时着色。
 
 ## 实际数据与网格边界
 
@@ -17,18 +17,17 @@
 python -m http.server 8000
 ~~~
 
-地点搜索和路线范围还需要已经部署的 Cloudflare Pages API 与 AMAP_WEB_KEY 加密变量。
+地点搜索和路线范围还需要已经部署的 Cloudflare Worker API 与 AMAP_WEB_KEY 加密变量。
 
-## Cloudflare Pages 部署
+## Cloudflare Worker 部署
 
-项目使用 Cloudflare Pages 的 Git 集成，仓库根目录作为站点目录。创建或检查项目时，把 Build command 设为 `exit 0`，Build output directory 设为 `.`；`functions/api/` 会生成 `/api/*` 服务端路由，`_routes.json` 让其他静态资源继续直接由 Pages 提供。
+`worker.js` 将 `/api/health`、`/api/search` 和 `/api/isochrone` 分发到 `functions/api/` 中的处理器。`wrangler.toml` 将 Cloudflare Worker 入口设为 `worker.js`，Worker 名称需与 Cloudflare 控制台中的 `subwaywhisper` 一致。
 
-1. 在 Cloudflare Dashboard 打开 subwaywhisper Pages 项目。
-2. 进入 **Settings → Variables and Secrets → Add**，变量名填写 AMAP_WEB_KEY，把文件 gaode.txt 中的 Key 放入值栏并选 **Encrypt**。将其设在 Production 环境；如要预览分支调用 API，也可为 Preview 单独设置。
-3. 保存后重新部署项目。不要将 Key 写进 app.js、仓库变量文件或 GitHub Pages 产物。
-4. 正式 Pages 域名如果不是 subwaywhisper.pages.dev，请把 app.js 顶部的 API 地址 https://subwaywhisper.pages.dev/api 改成实际的 Pages 域名加 /api。
-5. 确认 Production branch 是 `main` 且启用自动部署。推送到 `main` 后，GitHub Pages 和 Cloudflare Pages 都会自动更新；GitHub Pages 前端通过 Cloudflare Pages API 访问路线服务。
+1. 在 Cloudflare Dashboard 打开 `subwaywhisper` Worker，**Settings → Build** 确认 Git 仓库是 `lzq1206/SubwayWhisper`、生产分支是 `main`、部署命令为 `npx wrangler deploy`。
+2. 在 Worker 的 **Settings → Variables & Secrets → Add** 添加名为 `AMAP_WEB_KEY` 的加密 Secret，值从本地 `gaode.txt` 文件复制。不要把 Key 写进 `app.js`、仓库变量文件或 GitHub Pages 产物。
+3. 保存后重新部署。Worker 的 `workers.dev` 地址可在 Overview 中查看；如果前端使用 GitHub Pages，请把 `app.js` 顶部的备用 API 地址改成该 Worker 地址加 `/api`。如果页面本身由此 Worker 域名打开，前端会自动使用同域 `/api`。
+4. GitHub Pages 已从 `main` 根目录发布。向 `main` 推送会分别触发 GitHub Pages 和 Cloudflare Workers Builds。
 
 ## 路线服务
 
-网页中的高德 Key 仅由 Cloudflare Pages Function 读取。服务仅开放地点搜索和固定参数的范围计算，并限制来源、单次路线点数和查询频率。公交路线按所选出发时刻规划。提交搜索词、出发点与网格目的地点时，坐标和路线查询会发送到高德。
+网页中的高德 Key 仅由 Cloudflare Worker 读取。服务仅开放地点搜索和固定参数的范围计算，并限制来源、单次路线点数和查询频率。公交路线按所选出发时刻规划。提交搜索词、出发点与网格目的地点时，坐标和路线查询会发送到高德。
