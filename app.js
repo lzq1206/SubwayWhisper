@@ -220,8 +220,8 @@ function placeOrigin(point, name = '') {
   originMarker = new AMap.Marker({
     position: coordinate,
     title: originName || '出发点',
-    content: '<span class="origin-marker" aria-hidden="true"></span>',
-    offset: new AMap.Pixel(-12, -24),
+    content: '<svg class="origin-marker" viewBox="0 0 32 40" aria-hidden="true"><path class="origin-marker-body" d="M16 1.5C8.02 1.5 1.55 7.98 1.55 15.95c0 10.15 14.45 22.55 14.45 22.55s14.45-12.4 14.45-22.55C30.45 7.98 23.98 1.5 16 1.5Z"/><circle cx="16" cy="15.5" r="5.5" class="origin-marker-center"/><circle cx="16" cy="15.5" r="2.1" class="origin-marker-dot"/></svg>',
+    offset: new AMap.Pixel(-16, -40),
     zIndex: 2000,
   });
   map.add(originMarker);
