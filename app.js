@@ -348,7 +348,6 @@ function worldPopTileUrl(x, y, z) {
 
 function setWorldPopEnabled(enabled) {
   elements.worldPopLegend.hidden = !enabled;
-  elements.bottomControlDock.classList.toggle('has-population-legend', enabled);
   if (!map) return;
   if (enabled && !worldPopLayer) {
     worldPopLayer = new AMap.TileLayer({
@@ -838,7 +837,8 @@ function fitReachToMap() {
   const isMobile = window.innerWidth <= 790;
   const topHeight = elements.topBrand.getBoundingClientRect().height;
   const dockTop = elements.bottomControlDock.getBoundingClientRect().top;
-  const bottomAvoid = window.innerHeight - dockTop;
+  const legendHeight = elements.worldPopLegend.offsetHeight ? elements.worldPopLegend.offsetHeight + 8 : 0;
+  const bottomAvoid = window.innerHeight - dockTop + legendHeight;
   const avoid = isMobile
     ? [topHeight + 18, 56, bottomAvoid + 18, 12]
     : [topHeight + 20, 56, bottomAvoid + 20, 12];
