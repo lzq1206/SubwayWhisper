@@ -177,10 +177,9 @@ h1 { margin: 0; color: #174bc1; font-size: 12px; line-height: 1.2; letter-spacin
   .panel-footer { margin-top: 7px; }
   .panel-footer p { font-size: 8px; line-height: 1.45; }
   .location-fab { right: 12px; bottom: calc(10px + env(safe-area-inset-bottom)); }
-  .map-top-right { top: max(128px, calc(env(safe-area-inset-top) + 118px)); right: 56px; left: 12px; display: flex; justify-content: center; }
-  .map-status { max-width: min(340px, calc(100vw - 82px)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .map-controls { top: max(170px, calc(env(safe-area-inset-top) + 160px)); right: 12px; }
-  .toast { bottom: calc(160px + env(safe-area-inset-bottom)); max-width: calc(100vw - 40px); border-radius: 14px; }
+  .map-top-right,
+  .toast { display: none; }
 }
 
 @media (max-width: 380px) {
