@@ -4,6 +4,7 @@ const VALHALLA_ISOCHRONE_URL = 'https://valhalla1.openstreetmap.de/isochrone';
 const VALHALLA_CLIENT_ID = 'https://lzq1206.github.io/SubwayWhisper/';
 const HERITAGE_SITES_URL = 'data/national-key-cultural-sites.json';
 const WORLDPOP_IMAGE_SERVICE = 'https://worldpop.arcgis.com/arcgis/rest/services/WorldPop_Population_Density_100m/ImageServer/exportImage';
+const WORLDPOP_TOTAL_POPULATION_STATS_SERVICE = 'https://worldpop.arcgis.com/arcgis/rest/services/WorldPop_Total_Population_100m/ImageServer/computeStatisticsHistograms';
 const WORLDPOP_DATA_YEAR = 2020;
 const WORLDPOP_RENDERING_RULE = {
   rasterFunction: 'Colormap',
@@ -89,6 +90,7 @@ const elements = {
   resultTitle: document.querySelector('#result-title'),
   areaValue: document.querySelector('#area-value'),
   radiusValue: document.querySelector('#radius-value'),
+  populationValue: document.querySelector('#population-value'),
   mapStatus: document.querySelector('#map-status'),
   toast: document.querySelector('#toast'),
   zoomIn: document.querySelector('#zoom-in'),
@@ -103,6 +105,10 @@ const elements = {
 
 function formatNumber(value, digits = 1) {
   return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: digits }).format(value);
+}
+
+function formatPopulation(value) {
+  return new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(Math.round(value));
 }
 
 function showToast(message, duration = 4200) {
@@ -597,6 +603,8 @@ function clearResults(message = '设置出发点后计算可达边界') {
   reachOverlays = [];
   elements.areaValue.textContent = '—';
   elements.radiusValue.textContent = '—';
+  elements.populationValue.textContent = '—';
+  elements.populationValue.title = '基于 WorldPop 2020 年 100 米总人口栅格估算';
   elements.calculateButton.disabled = !origin || !map;
   elements.calculateButton.textContent = '计算可达边界';
   elements.resultTitle.textContent = '等待计算可达等时圈';
@@ -832,6 +840,65 @@ function polygonMetrics(shapes, maxMinutes, originCoordinate) {
   return { area, radius };
 }
 
+function worldPopRing(ring, shouldBeClockwise) {
+  if (!Array.isArray(ring) || ring.length < 3) return null;
+  const converted = ring.map((point) => gcj02ToWgs84(Number(point[0]), Number(point[1])));
+  if (converted.some((point) => !point.every(Number.isFinite))) return null;
+  const first = converted[0];
+  const last = converted[converted.length - 1];
+  if (Math.abs(first[0] - last[0]) > 1e-9 || Math.abs(first[1] - last[1]) > 1e-9) converted.push([...first]);
+
+  let signedArea = 0;
+  for (let index = 0; index < converted.length - 1; index += 1) {
+    const current = converted[index];
+    const next = converted[index + 1];
+    signedArea += current[0] * next[1] - next[0] * current[1];
+  }
+  if (Math.abs(signedArea) < 1e-12) return null;
+  const isClockwise = signedArea < 0;
+  return isClockwise === shouldBeClockwise ? converted : converted.reverse();
+}
+
+function worldPopGeometry(shapes, maxMinutes) {
+  const rings = [];
+  for (const shape of shapes) {
+    if (shape.minutes !== maxMinutes) continue;
+    for (const polygon of shape.polygons) {
+      for (let index = 0; index < polygon.length; index += 1) {
+        const ring = worldPopRing(polygon[index], index === 0);
+        if (ring) rings.push(ring);
+      }
+    }
+  }
+  if (!rings.length) throw new Error('等时圈没有可用于人口统计的边界');
+  return { rings, spatialReference: { wkid: 4326 } };
+}
+
+async function estimateCoveredPopulation(shapes, maxMinutes, signal) {
+  const form = new URLSearchParams({
+    geometry: JSON.stringify(worldPopGeometry(shapes, maxMinutes)),
+    geometryType: 'esriGeometryPolygon',
+    time: String(Date.UTC(WORLDPOP_DATA_YEAR, 0, 1)),
+    f: 'json',
+  });
+  const response = await fetch(WORLDPOP_TOTAL_POPULATION_STATS_SERVICE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+    body: form.toString(),
+    signal,
+  });
+  let result = {};
+  try { result = await response.json(); } catch {}
+  if (!response.ok || result.error) {
+    throw new Error(result.error?.message || 'WorldPop 人口服务暂不可用');
+  }
+  const sums = Array.isArray(result.statistics)
+    ? result.statistics.map((statistic) => statistic.sum == null ? Number.NaN : Number(statistic.sum)).filter((value) => Number.isFinite(value))
+    : [];
+  if (!sums.length) throw new Error('WorldPop 未返回该区域的人口统计');
+  return Math.max(0, sums.reduce((total, value) => total + value, 0));
+}
+
 function fitReachToMap() {
   if (!map || !reachOverlays.length) return;
   const isMobile = window.innerWidth <= 790;
@@ -875,6 +942,8 @@ function renderReach(data, maxMinutes) {
   if (!reachOverlays.length) throw new Error('没有找到可绘制的可达边界');
   elements.areaValue.textContent = formatNumber(metrics.area, metrics.area < 10 ? 1 : 0);
   elements.radiusValue.textContent = metrics.radius ? formatNumber(metrics.radius / 1000, 1) : '—';
+  elements.populationValue.textContent = '…';
+  elements.populationValue.title = '正在统计 WorldPop 2020 年 100 米总人口栅格';
   elements.resultTitle.textContent = originName + ' · ' + MODES[activeMode].name + ' · ' + maxMinutes + ' 分钟内';
   fitReachToMap();
   setMapStatus(MODES[activeMode].source + ' · ' + data.shapes.length + ' 个边界 · 查询 ' + data.queryCount + ' 次');
@@ -895,6 +964,8 @@ async function calculateReach() {
   const thisController = activeController;
   elements.calculateButton.disabled = true;
   elements.calculateButton.textContent = '正在计算可达边界…';
+  elements.populationValue.textContent = '…';
+  elements.populationValue.title = '正在统计 WorldPop 2020 年 100 米总人口栅格';
   elements.resultTitle.textContent = activeMode === 'transit' ? '正在查询高德公交到达圈' : '正在计算 OSM 路网等时圈';
   if (map && reachOverlays.length) map.remove(reachOverlays);
   reachOverlays = [];
@@ -905,9 +976,21 @@ async function calculateReach() {
       : await buildRoadReach(maxMinutes, thisController.signal);
     if (thisController.signal.aborted) return;
     renderReach(data, maxMinutes);
+    elements.calculateButton.textContent = '正在统计覆盖人口…';
+    try {
+      const population = await estimateCoveredPopulation(data.shapes, maxMinutes, thisController.signal);
+      if (thisController.signal.aborted) return;
+      elements.populationValue.textContent = formatPopulation(population);
+      elements.populationValue.title = 'WorldPop ' + WORLDPOP_DATA_YEAR + ' 年 100 米总人口栅格估算';
+    } catch (populationError) {
+      if (populationError.name === 'AbortError') throw populationError;
+      elements.populationValue.textContent = '—';
+      elements.populationValue.title = '可覆盖人口暂不可用：' + populationError.message;
+    }
   } catch (error) {
     if (error.name !== 'AbortError') {
       elements.resultTitle.textContent = '可达边界查询失败';
+      elements.populationValue.textContent = '—';
       setMapStatus('边界查询失败 · 请查看提示并稍后重试');
       showToast(error.message || '可达边界查询失败，请稍后重试', 6500);
     }

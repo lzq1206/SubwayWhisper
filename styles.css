@@ -98,12 +98,12 @@ h1 { margin: 0; color: #174bc1; font-size: 12px; line-height: 1.2; letter-spacin
 .results-heading { display: flex; align-items: flex-start; width: 100%; min-width: 0; max-width: 100%; gap: 7px; color: #566987; font-size: 10px; font-weight: 600; line-height: 1.4; }
 .results-heading > span:last-child { flex: 1 1 0; min-width: 0; max-width: 100%; overflow-wrap: anywhere; word-break: break-word; }
 .results-dot { flex: 0 0 7px; width: 7px; height: 7px; margin-top: 3px; border-radius: 50%; background: #3477ee; box-shadow: 0 0 0 3px rgba(52, 119, 238, .12); }
-.stats-row { display: flex; align-items: center; margin-top: 12px; }
+.stats-row { display: grid; grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr) 1px minmax(0, 1fr); align-items: center; column-gap: 10px; margin-top: 12px; }
 .stat-item { flex: 1 1 0; min-width: 0; }
 .stat-item strong { display: block; max-width: 100%; color: #1e3966; font-size: 21px; font-weight: 700; letter-spacing: -.04em; line-height: 1.1; overflow-wrap: anywhere; }
 .stat-item > span { display: block; max-width: 100%; margin-top: 4px; color: #8895a9; font-size: 9px; overflow-wrap: anywhere; }
 .stat-item i { color: #9ba6b6; font-size: 8px; font-style: normal; }
-.stat-divider { width: 1px; height: 32px; margin: 0 16px 0 10px; background: #dfe7f2; }
+.stat-divider { width: 1px; height: 30px; margin: 0; background: #dfe7f2; }
 .panel-footer { width: 100%; min-width: 0; max-width: 100%; margin-top: 9px; padding: 0 2px; color: #75839a; overflow-wrap: anywhere; }
 .panel-footer p { max-width: 100%; margin: 0; font-size: 9px; line-height: 1.55; overflow-wrap: anywhere; word-break: break-word; }
 .panel-footer a { overflow-wrap: anywhere; word-break: break-word; }
@@ -168,10 +168,10 @@ h1 { margin: 0; color: #174bc1; font-size: 12px; line-height: 1.2; letter-spacin
   .more-content-body { max-height: min(42vh, 300px); }
   .results-card { padding: 8px 9px; }
   .results-heading { font-size: 9.5px; }
-  .stats-row { margin-top: 8px; }
-  .stat-item strong { font-size: 17px; }
+  .stats-row { column-gap: 6px; margin-top: 8px; }
+  .stat-item strong { font-size: clamp(13px, 4.5vw, 17px); }
   .stat-item > span { font-size: 8px; line-height: 1.35; }
-  .stat-divider { margin-right: 10px; margin-left: 8px; }
+  .stat-divider { height: 26px; }
   .panel-footer { margin-top: 7px; }
   .panel-footer p { font-size: 8px; line-height: 1.45; }
   .location-fab { right: 12px; bottom: calc(10px + env(safe-area-inset-bottom)); }
@@ -193,7 +193,8 @@ h1 { margin: 0; color: #174bc1; font-size: 12px; line-height: 1.2; letter-spacin
   .time-value { font-size: 14px; }
   .time-value span { font-size: 8px; }
   .results-heading { font-size: 9px; }
-  .stat-item strong { font-size: 16px; }
+  .stat-item strong { font-size: clamp(12px, 4.2vw, 16px); }
+  .stats-row { column-gap: 4px; }
   .stat-item > span { font-size: 7.5px; }
   .panel-footer p { font-size: 7.5px; }
   .location-fab { right: 8px; }
