@@ -108,7 +108,12 @@ function formatNumber(value, digits = 1) {
 }
 
 function formatPopulation(value) {
-  return new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(Math.round(value));
+  if (!Number.isFinite(value)) return '—';
+  const rounded = Math.max(0, Math.round(value));
+  const oneDecimal = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 1 });
+  if (rounded >= 100_000_000) return oneDecimal.format(rounded / 100_000_000) + '亿';
+  if (rounded >= 10_000) return oneDecimal.format(rounded / 10_000) + '万';
+  return new Intl.NumberFormat('zh-CN').format(rounded);
 }
 
 function showToast(message, duration = 4200) {
@@ -875,12 +880,11 @@ function worldPopGeometry(shapes, maxMinutes) {
 }
 
 async function estimateCoveredPopulation(shapes, maxMinutes, signal) {
-  const form = new URLSearchParams({
-    geometry: JSON.stringify(worldPopGeometry(shapes, maxMinutes)),
-    geometryType: 'esriGeometryPolygon',
-    time: String(Date.UTC(WORLDPOP_DATA_YEAR, 0, 1)),
-    f: 'json',
-  });
+  const form = new URLSearchParams();
+  form.append('geometry', JSON.stringify(worldPopGeometry(shapes, maxMinutes)));
+  form.append('geometryType', 'esriGeometryPolygon');
+  form.append('time', String(Date.UTC(WORLDPOP_DATA_YEAR, 0, 1)));
+  form.append('f', 'json');
   const response = await fetch(WORLDPOP_TOTAL_POPULATION_STATS_SERVICE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
